@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Baustellen-App</title>
+<meta name="theme-color" content="#3d6a41">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Baustelle">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app"></div>
+
+<div id="viewer" hidden>
+  <div class="v-bar">
+    <button id="v-close" aria-label="Schließen">✕</button>
+    <div id="v-title" class="v-title"></div>
+    <button id="v-prev" aria-label="Vorherige Seite">‹</button>
+    <span id="v-page" class="v-page"></span>
+    <button id="v-next" aria-label="Nächste Seite">›</button>
+    <button id="v-fit" aria-label="Einpassen">⤢</button>
+    <button id="v-ext" aria-label="In Safari öffnen">↗</button>
+  </div>
+  <div id="v-wrap"><div id="v-stage"><canvas id="v-canvas"></canvas></div></div>
+  <div id="v-msg" class="v-msg"></div>
+</div>
+
+<script src="config.js"></script>
+<script src="lib/msal-browser.min.js"></script>
+<script src="lib/pdf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,421 @@
+"use strict";
+/* Baustellen-App: LV-Stand + Pläne aus OneDrive (Microsoft Graph). Reine Lese-App. */
+const CFG = window.APP_CONFIG;
+const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
+const DEMO = new URLSearchParams(location.search).has("demo") || (!CFG.clientId && LOCAL);
+const GRAPH = "https://graph.microsoft.com/v1.0/me/drive";
+const SCOPES = ["Files.Read"];
+const $ = (s, r = document) => r.querySelector(s);
+const app = $("#app");
+
+/* ---------- Hilfen ---------- */
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const nf = (n, min = 2, max = 2) => Number(n).toLocaleString("de-DE", { minimumFractionDigits: min, maximumFractionDigits: max });
+const eur = (n) => nf(n) + " €";
+const menge = (n) => nf(n, 2, 3);
+const enc = (p) => p.split("/").map(encodeURIComponent).join("/");
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* voll oder gesperrt */ } },
+};
+class AuthError extends Error {}
+class NotFound extends Error {}
+
+/* ---------- Anmeldung (MSAL, Redirect) ---------- */
+let msalApp = null, account = null;
+async function initAuth() {
+  if (DEMO) return true;
+  if (!CFG.clientId || !CFG.tenantId) return "config";
+  const base = location.origin + location.pathname.replace(/[^/]*$/, "");
+  msalApp = new window.msal.PublicClientApplication({
+    auth: { clientId: CFG.clientId, authority: "https://login.microsoftonline.com/" + CFG.tenantId, redirectUri: base, navigateToLoginRequestUrl: false },
+    cache: { cacheLocation: "localStorage" },
+  });
+  await msalApp.initialize();
+  const r = await msalApp.handleRedirectPromise().catch((e) => { console.warn(e); return null; });
+  account = (r && r.account) || msalApp.getActiveAccount() || msalApp.getAllAccounts()[0] || null;
+  if (account) msalApp.setActiveAccount(account);
+  return !!account;
+}
+const login = () => msalApp.loginRedirect({ scopes: SCOPES, prompt: "select_account" });
+async function token() {
+  try { return (await msalApp.acquireTokenSilent({ scopes: SCOPES, account })).accessToken; }
+  catch (e) { throw new AuthError(e.message); }
+}
+
+/* ---------- Datenzugriff (Graph bzw. Demo) ---------- */
+async function graph(url, opt = {}) {
+  const t = await token();
+  const r = await fetch(url, { ...opt, headers: { Authorization: "Bearer " + t } });
+  if (r.status === 401) throw new AuthError("401");
+  if (r.status === 404) throw new NotFound(url);
+  if (!r.ok) throw new Error("Graph " + r.status);
+  return r;
+}
+const data = {
+  async json(rel) { // Datei aus dem Datenordner, mit Offline-Cache
+    const key = "cache:" + rel;
+    try {
+      let j;
+      if (DEMO) j = await (await fetch("/demo-daten/" + rel)).json();
+      else j = await (await graph(`${GRAPH}/root:/${enc(CFG.datenRoot + "/" + rel)}:/content`)).json();
+      store.set(key, { t: Date.now(), j });
+      return { j, offline: false };
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      const c = store.get(key);
+      if (c) return { j: c.j, offline: true, t: c.t };
+      throw e;
+    }
+  },
+  async list(path) { // Ordnerinhalt (nur Metadaten)
+    if (DEMO) return (await (await fetch("/demo-plaene/index.json")).json()).filter((x) => x.folder === path || path === "");
+    let url = `${GRAPH}/root:/${enc(path)}:/children?$select=name,size,lastModifiedDateTime,file,folder&$top=200`;
+    const out = [];
+    while (url) {
+      const j = await (await graph(url)).json();
+      out.push(...j.value);
+      url = j["@odata.nextLink"];
+    }
+    return out;
+  },
+  async blob(path, name) {
+    if (DEMO) return await (await fetch("/demo-plaene/f/" + encodeURIComponent(name))).arrayBuffer();
+    try { return await (await graph(`${GRAPH}/root:/${enc(path)}:/content`)).arrayBuffer(); }
+    catch (e) {
+      if (e instanceof AuthError || e instanceof NotFound) throw e;
+      const meta = await (await graph(`${GRAPH}/root:/${enc(path)}`)).json(); // Fallback: vorab signierte Download-URL
+      return await (await fetch(meta["@microsoft.graph.downloadUrl"])).arrayBuffer();
+    }
+  },
+};
+
+/* ---------- Seitenrahmen ---------- */
+function shell({ title, back, tabs, refresh = true }, body) {
+  app.innerHTML = `<header class="top"><div class="top-row">
+    ${back ? `<a class="icon-btn" href="${back}" aria-label="Zurück">‹</a>` : ""}
+    <h1>${esc(title)}</h1>
+    ${refresh ? `<button class="icon-btn" id="btn-refresh" aria-label="Aktualisieren">↻</button>` : ""}
+  </div>${tabs ? `<nav class="tabs">${tabs}</nav>` : ""}</header><main class="wrap">${body}</main>`;
+  const rb = $("#btn-refresh");
+  if (rb) rb.onclick = () => render();
+}
+const loading = () => `<div class="center"><span class="spin"></span></div>`;
+
+/* ---------- Router ---------- */
+let projects = null;
+async function render() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  try {
+    if (!projects) {
+      shell({ title: "Baustellen", refresh: false }, loading());
+      projects = (await data.json("projekte.json")).j.projekte;
+    }
+    if (parts[0] === "p") {
+      const proj = projects.find((p) => p.slug === parts[1]);
+      if (!proj) return (location.hash = "#/");
+      return parts[2] === "plaene" ? viewPlaene(proj) : viewLV(proj);
+    }
+    viewHome();
+  } catch (e) { fehler(e); }
+}
+function fehler(e) {
+  if (e instanceof AuthError) return loginScreen("Die Sitzung ist abgelaufen. Bitte neu anmelden.");
+  const nf404 = e instanceof NotFound;
+  shell({ title: "Baustellen", refresh: true }, `<div class="center"><h2>${nf404 ? "Noch keine Daten" : "Das hat nicht geklappt"}</h2>
+    <p>${nf404 ? "Die Datei wurde in OneDrive nicht gefunden. Auf dem PC das Sync-Skript laufen lassen und OneDrive synchronisieren lassen." : esc(e.message || e)}</p></div>`);
+}
+function loginScreen(msg) {
+  app.innerHTML = `<div class="center" style="padding-top:22vh"><h2>Baustellen-App</h2><p>${esc(msg || "Bitte mit dem Microsoft-Konto der Firma anmelden.")}</p>
+    <button class="btn" id="btn-login">Anmelden</button></div>`;
+  $("#btn-login").onclick = login;
+}
+
+/* ---------- Startbildschirm ---------- */
+function viewHome() {
+  shell({ title: "Meine Projekte" }, projects.map((p) => `<a class="card proj" href="#/p/${p.slug}/lv">
+    <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.ort || "")}${p.lose && p.lose.length > 1 ? ` · ${p.lose.length} Lose` : ""}</div></a>`).join("") ||
+    `<div class="center">Keine Projekte eingetragen.</div>`);
+}
+const tabsFor = (proj, on) => `<a href="#/p/${proj.slug}/lv" class="${on === "lv" ? "on" : ""}">LV</a><a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>`;
+
+/* ---------- LV-Ansicht ---------- */
+const lvState = { los: {}, q: "", filter: "alle", open: new Set() };
+async function viewLV(proj) {
+  const losId = lvState.los[proj.slug] || (proj.lose[0] && proj.lose[0].id);
+  shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "lv") }, loading());
+  if (!losId) return shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "lv") }, `<div class="center">Für dieses Projekt ist noch kein LV eingerichtet.</div>`);
+  const { j: lv, offline, t } = await data.json(`${proj.slug}/${losId}.json`);
+  const pct = (p) => (p.menge > 0 ? p.ist_menge / p.menge : p.gp > 0 ? p.ist_gp / p.gp : p.ist_gp > 0 ? 1 : 0);
+  const gTitle = Object.fromEntries(lv.gruppen.map((g) => [g.nr, g.titel]));
+  const groups = new Map();
+  for (const p of lv.positionen) {
+    const g = p.nr.split(".").slice(0, 2).join(".");
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(p);
+  }
+  const rest = lv.summen.soll_netto - lv.summen.ist_netto;
+  const stand = lv.rechnung
+    ? `${lv.rechnung.ar_nr}. Abschlagsrechnung vom ${lv.rechnung.rechnungsdatum}, geprüft (${esc(lv.rechnung.datei)})`
+    : "Noch keine geprüfte Abschlagsrechnung";
+  const chips = [["alle", "Alle"], ["arbeit", "In Arbeit"], ["offen", "Offen"], ["fertig", "Fertig"], ["ueber", "Überschritten"], ["gekuerzt", "Gekürzt"]];
+  const body = `
+    ${lv.los_name && proj.lose.length > 1 ? `<div class="chips">${proj.lose.map((l) => `<button class="chip ${l.id === losId ? "on" : ""}" data-los="${l.id}">${esc(l.name)}</button>`).join("")}</div>` : ""}
+    ${offline ? `<div class="note warn">Offline: Stand vom ${new Date(t).toLocaleString("de-DE")}.</div>` : ""}
+    ${lv.neuere_ar_ungeprueft ? `<div class="note warn">Die ${lv.neuere_ar_ungeprueft}. Abschlagsrechnung liegt vor, ist aber noch nicht geprüft.</div>` : ""}
+    <div class="kpis">
+      <div class="kpi"><div class="l">LV-Summe</div><div class="v num">${nf(lv.summen.soll_netto, 0, 0)} €</div></div>
+      <div class="kpi"><div class="l">Abgerechnet</div><div class="v num">${nf(lv.summen.ist_netto, 0, 0)} €</div></div>
+      <div class="kpi"><div class="l">${nf((lv.summen.ist_netto / lv.summen.soll_netto) * 100, 1, 1)} %</div><div class="v num">${nf(rest, 0, 0)} €</div></div>
+    </div>
+    <div class="bar" style="margin:-2px 0 8px"><i style="width:${Math.min(100, (lv.summen.ist_netto / lv.summen.soll_netto) * 100)}%"></i></div>
+    <p class="meta">Stand: ${stand}. Netto, ohne MwSt.</p>
+    <div class="search"><input type="search" id="q" placeholder="Suchen: Nummer, Kurztext, Langtext" value="${esc(lvState.q)}" autocomplete="off"></div>
+    <div class="chips" id="filters">${chips.map(([k, l]) => `<button class="chip ${lvState.filter === k ? "on" : ""}" data-f="${k}">${l}</button>`).join("")}</div>
+    <div id="lvlist"></div>
+    ${lv.ausserhalb_lv.length ? `<div class="h-small">Außerhalb des LV abgerechnet</div><div class="card">${lv.ausserhalb_lv.map((a) => `<div class="pos-num"><span class="mono">${esc(a.nr)}</span><b class="num">${eur(a.gp)}</b></div>`).join("")}</div>` : ""}
+    <p class="meta">Datenstand vom ${esc(lv.erzeugt)} · LV aus ${esc(lv.lv_quelle)}</p>`;
+  shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "lv") }, body);
+
+  const passes = (p) => {
+    const x = pct(p);
+    switch (lvState.filter) {
+      case "arbeit": return x > 0 && x < 0.995;
+      case "offen": return p.ist_gp === 0 && p.ist_menge === 0;
+      case "fertig": return x >= 0.995 && x <= 1.005;
+      case "ueber": return x > 1.005;
+      case "gekuerzt": return p.gekuerzt;
+      default: return true;
+    }
+  };
+  const hl = (s, q) => {
+    s = esc(s);
+    if (!q) return s;
+    const re = new RegExp("(" + esc(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig");
+    return s.replace(re, "<mark>$1</mark>");
+  };
+  function draw() {
+    const q = lvState.q.trim().toLowerCase();
+    let html = "", hits = 0;
+    for (const [g, list] of groups) {
+      const shown = list.filter((p) => passes(p) && (!q || p.nr.includes(q) || p.kurz.toLowerCase().includes(q) || p.lang.toLowerCase().includes(q)));
+      if (!shown.length) continue;
+      hits += shown.length;
+      const soll = list.reduce((a, p) => a + p.gp, 0), ist = list.reduce((a, p) => a + p.ist_gp, 0);
+      const gp = soll > 0 ? (ist / soll) * 100 : 0;
+      const isOpen = q || lvState.filter !== "alle" || lvState.open.has(g);
+      html += `<details class="grp" data-g="${g}" ${isOpen ? "open" : ""}><summary>
+        <div class="g-title"><span>${esc(g)} ${esc(gTitle[g] || "")}</span><span class="arrow">›</span></div>
+        <div class="g-sub"><span class="num">${eur(ist)} von ${eur(soll)}</span><span class="num">${nf(gp, 0, 0)} %</span></div>
+        <div class="bar"><i style="width:${Math.min(100, gp)}%"></i></div></summary>
+        ${shown.map((p) => posHtml(p, q)).join("")}</details>`;
+    }
+    $("#lvlist").innerHTML = html || `<div class="center">Keine Treffer.</div>`;
+    if (q) $("#q").dataset.hits = hits;
+  }
+  function posHtml(p, q) {
+    const x = pct(p), over = x > 1.005;
+    const open = lvState.open.has(p.nr);
+    return `<div class="pos ${open ? "open" : ""}" data-nr="${esc(p.nr)}">
+      <div class="pos-head"><span class="nr mono">${esc(p.nr.split(".").slice(2).join(".") || p.nr)}</span>
+        <span class="kurz">${hl(p.kurz, q)}${p.bedarf ? '<span class="tag">Bedarf</span>' : ""}${p.gekuerzt ? '<span class="tag">gekürzt</span>' : ""}</span></div>
+      <div class="pos-num"><span class="num">${menge(p.menge)} ${esc(p.einheit)} × ${eur(p.ep)}</span><b class="num">${eur(p.gp)}</b></div>
+      <div class="bar ${over ? "over" : ""}"><i style="width:${Math.min(100, x * 100)}%"></i></div>
+      <div class="pos-ist"><span class="num">Ist ${menge(p.ist_menge)} ${esc(p.einheit)} · ${eur(p.ist_gp)}</span><span class="p num ${over ? "over" : ""}">${nf(x * 100, 0, 0)} %</span></div>
+      ${open ? `<div class="detail"><div class="dl">${esc(p.nr)}${p.gekuerzt ? ` · Auftragnehmer forderte ${menge(p.an_menge)} ${esc(p.einheit)}, geprüft ${menge(p.ist_menge)}` : ""}</div>${hl(p.lang, q)}</div>` : ""}
+    </div>`;
+  }
+  draw();
+  const list = $("#lvlist");
+  list.addEventListener("click", (e) => {
+    const sum = e.target.closest("summary");
+    if (sum) { const d = sum.parentElement, g = d.dataset.g; setTimeout(() => (d.open ? lvState.open.add(g) : lvState.open.delete(g)), 0); return; }
+    const pos = e.target.closest(".pos");
+    if (!pos) return;
+    const nr = pos.dataset.nr;
+    lvState.open.has(nr) ? lvState.open.delete(nr) : lvState.open.add(nr);
+    const d = pos.parentElement, top = pos.getBoundingClientRect().top;
+    const p = lv.positionen.find((x) => x.nr === nr);
+    pos.outerHTML = posHtml(p, lvState.q.trim().toLowerCase());
+    d.open = true;
+    window.scrollBy(0, d.querySelector(`[data-nr="${CSS.escape(nr)}"]`).getBoundingClientRect().top - top);
+  });
+  let timer;
+  $("#q").addEventListener("input", (e) => { clearTimeout(timer); timer = setTimeout(() => { lvState.q = e.target.value; draw(); }, 150); });
+  $("#filters").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-f]");
+    if (!b) return;
+    lvState.filter = b.dataset.f;
+    document.querySelectorAll("#filters .chip").forEach((c) => c.classList.toggle("on", c === b));
+    draw();
+  });
+  document.querySelectorAll("[data-los]").forEach((b) => (b.onclick = () => { lvState.los[proj.slug] = b.dataset.los; viewLV(proj); }));
+}
+
+/* ---------- Pläne-Ansicht ---------- */
+const plState = { q: "" };
+const SKIP_DIRS = /^(dwg|errorreports|archiv|00[ _-]?archiv)$/i;
+async function viewPlaene(proj) {
+  shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "pl") }, loading());
+  if (!proj.ap) return shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "pl") }, `<div class="center">Für dieses Projekt ist kein Plan-Ordner eingetragen.</div>`);
+  const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.ap}`;
+  const key = "cache:plaene:" + proj.slug;
+  let files, offline = false;
+  try {
+    const top = await data.list(DEMO ? "" : base);
+    files = [];
+    const subs = [];
+    for (const it of top) {
+      if (it.folder) { if (!SKIP_DIRS.test(it.name)) subs.push(it); }
+      else if (/\.pdf$/i.test(it.name)) files.push({ name: it.name, size: it.size, mtime: it.lastModifiedDateTime, path: base + "/" + it.name, sub: "" });
+    }
+    if (!DEMO) {
+      const res = await Promise.all(subs.map((s) => data.list(base + "/" + s.name).then((l) => l.map((it) => ({ it, s })), () => [])));
+      for (const r of res) for (const { it, s } of r)
+        if (!it.folder && /\.pdf$/i.test(it.name)) files.push({ name: it.name, size: it.size, mtime: it.lastModifiedDateTime, path: base + "/" + s.name + "/" + it.name, sub: s.name });
+    }
+    store.set(key, files);
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+    files = store.get(key);
+    if (!files) throw e;
+    offline = true;
+  }
+  // Ältere Stände erkennen: gleicher Name ohne _JJJJMMTT, neuestes Datum gewinnt
+  const stem = (n) => n.replace(/\.pdf$/i, "").replace(/[_ -]?\d{8}$/, "");
+  const dateOf = (n) => (n.match(/(\d{8})\.pdf$/i) || [])[1] || "";
+  const newest = {};
+  for (const f of files) { const k = stem(f.name); if (!newest[k] || dateOf(f.name) > dateOf(newest[k])) newest[k] = f.name; }
+  for (const f of files) f.old = dateOf(f.name) !== "" && newest[stem(f.name)] !== f.name;
+  files.sort((a, b) => a.name.localeCompare(b.name, "de", { numeric: true }));
+
+  shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "pl") }, `
+    ${offline ? `<div class="note warn">Offline: gespeicherte Planliste, Pläne lassen sich nicht laden.</div>` : ""}
+    <div class="search"><input type="search" id="pq" placeholder="Pläne suchen" value="${esc(plState.q)}" autocomplete="off"></div>
+    <div id="pllist" style="margin-top:10px"></div>`);
+  const draw = () => {
+    const q = plState.q.trim().toLowerCase();
+    const shown = files.filter((f) => !q || (f.name + " " + f.sub).toLowerCase().includes(q));
+    $("#pllist").innerHTML = shown.map((f) => `<button class="card plan ${f.old ? "old" : ""}" data-i="${files.indexOf(f)}">
+      <span class="pi">PDF</span><span><div class="pn">${esc(f.name.replace(/\.pdf$/i, ""))}</div>
+      <div class="pm">${f.mtime ? new Date(f.mtime).toLocaleDateString("de-DE") : ""} · ${nf(f.size / 1048576, 1, 1)} MB${f.sub ? " · " + esc(f.sub) : ""}${f.old ? " · älterer Stand" : ""}</div></span></button>`).join("") || `<div class="center">Keine Pläne gefunden.</div>`;
+  };
+  draw();
+  $("#pq").addEventListener("input", (e) => { plState.q = e.target.value; draw(); });
+  $("#pllist").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (b) openPlan(files[+b.dataset.i]); });
+}
+
+/* ---------- PDF-Viewer mit Pinch-Zoom ---------- */
+const V = { doc: null, page: 1, s: 1, tx: 0, ty: 0, w: 0, h: 0, bytes: null, name: "" };
+const vw = () => $("#v-wrap");
+const vmsg = (t) => { $("#v-msg").innerHTML = t ? `<span>${esc(t)}</span>` : ""; };
+async function openPlan(f) {
+  $("#viewer").hidden = false;
+  document.body.style.overflow = "hidden";
+  $("#v-title").textContent = f.name.replace(/\.pdf$/i, "");
+  $("#v-page").textContent = "";
+  V.name = f.name; V.doc = null; V.bytes = null;
+  vmsg("Plan wird geladen …");
+  const c = $("#v-canvas"); c.width = c.height = 1;
+  try {
+    const buf = await data.blob(f.path, f.name);
+    V.bytes = buf;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdf.worker.min.js";
+    V.doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)), isEvalSupported: false }).promise;
+    await showPage(1);
+    vmsg("");
+  } catch (e) {
+    if (e instanceof AuthError) { closeViewer(); return fehler(e); }
+    vmsg("Plan konnte nicht geladen werden: " + (e.message || e));
+  }
+}
+function closeViewer() {
+  $("#viewer").hidden = true; document.body.style.overflow = "";
+  if (V.doc) { V.doc.destroy(); V.doc = null; }
+  V.bytes = null; vmsg("");
+}
+async function showPage(n) {
+  V.page = Math.min(Math.max(1, n), V.doc.numPages);
+  const multi = V.doc.numPages > 1;
+  $("#v-page").textContent = multi ? `${V.page}/${V.doc.numPages}` : "";
+  for (const id of ["#v-prev", "#v-next"]) $(id).hidden = !multi;
+  const page = await V.doc.getPage(V.page);
+  const cw = vw().clientWidth, ch = vw().clientHeight;
+  const base = page.getViewport({ scale: 1 });
+  const fit = Math.min(cw / base.width, ch / base.height);       // einpassen
+  V.w = base.width * fit; V.h = base.height * fit;
+  // Auflösung: bis ca. 4-fach scharf zoombar, iOS-Canvas-Grenze (~16,7 Mio. Pixel) beachten
+  const dpr = window.devicePixelRatio || 1;
+  let k = fit * dpr * 4;
+  const maxPx = 14e6;
+  if (base.width * k * base.height * k > maxPx) k = Math.sqrt(maxPx / (base.width * base.height));
+  const vp = page.getViewport({ scale: k });
+  const c = $("#v-canvas");
+  c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+  const st = $("#v-stage"); st.style.width = V.w + "px"; st.style.height = V.h + "px";
+  vmsg("Zeichnung wird aufgebaut …");
+  await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+  vmsg("");
+  fitView();
+}
+function fitView() { V.s = 1; V.tx = (vw().clientWidth - V.w) / 2; V.ty = (vw().clientHeight - V.h) / 2; applyT(); }
+function clampT() {
+  const cw = vw().clientWidth, ch = vw().clientHeight, W = V.w * V.s, H = V.h * V.s;
+  V.tx = W <= cw ? (cw - W) / 2 : Math.min(0, Math.max(cw - W, V.tx));
+  V.ty = H <= ch ? (ch - H) / 2 : Math.min(0, Math.max(ch - H, V.ty));
+}
+function applyT() { clampT(); $("#v-stage").style.transform = `translate(${V.tx}px,${V.ty}px) scale(${V.s})`; }
+function zoomAt(px, py, s2) {
+  s2 = Math.min(12, Math.max(1, s2));
+  V.tx = px - (px - V.tx) * (s2 / V.s); V.ty = py - (py - V.ty) * (s2 / V.s); V.s = s2; applyT();
+}
+(function gestures() {
+  const el = vw(), ptr = new Map();
+  let last = null, lastTap = 0;
+  const rel = (e) => { const r = el.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  el.addEventListener("pointerdown", (e) => {
+    el.setPointerCapture(e.pointerId); ptr.set(e.pointerId, rel(e));
+    last = null;
+    if (ptr.size === 1) {
+      const now = Date.now();
+      if (now - lastTap < 300) { const [x, y] = rel(e); zoomAt(x, y, V.s > 1.5 ? 1 : 3); lastTap = 0; } else lastTap = now;
+    }
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!ptr.has(e.pointerId)) return;
+    const old = ptr.get(e.pointerId), cur = rel(e);
+    if (ptr.size === 1) { V.tx += cur[0] - old[0]; V.ty += cur[1] - old[1]; ptr.set(e.pointerId, cur); applyT(); return; }
+    ptr.set(e.pointerId, cur);
+    if (ptr.size === 2) {
+      const [a, b] = [...ptr.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]), mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (last) { V.tx += mid[0] - last.mid[0]; V.ty += mid[1] - last.mid[1]; zoomAt(mid[0], mid[1], V.s * (d / last.d)); }
+      last = { d, mid };
+    }
+  });
+  const up = (e) => { ptr.delete(e.pointerId); last = null; };
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+  el.addEventListener("wheel", (e) => { e.preventDefault(); const [x, y] = rel(e); zoomAt(x, y, V.s * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+})();
+$("#v-close").onclick = closeViewer;
+$("#v-fit").onclick = fitView;
+$("#v-prev").onclick = () => V.doc && showPage(V.page - 1);
+$("#v-next").onclick = () => V.doc && showPage(V.page + 1);
+$("#v-ext").onclick = () => {
+  if (!V.bytes) return;
+  const u = URL.createObjectURL(new Blob([V.bytes], { type: "application/pdf" }));
+  window.open(u, "_blank");
+  setTimeout(() => URL.revokeObjectURL(u), 120000);
+};
+window.addEventListener("resize", () => { if (!$("#viewer").hidden && V.doc) { applyT(); } });
+
+/* ---------- Start ---------- */
+window.addEventListener("hashchange", () => { if (projects || DEMO || account) render(); });
+(async function main() {
+  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js").catch(() => {});
+  let ok;
+  try { ok = await initAuth(); } catch (e) { console.error(e); ok = false; }
+  if (ok === "config") return (app.innerHTML = `<div class="center" style="padding-top:22vh"><h2>Nicht eingerichtet</h2><p>In <span class="mono">config.js</span> fehlen Client-ID und Tenant-ID.</p></div>`);
+  if (!ok) return loginScreen();
+  render();
+})();
