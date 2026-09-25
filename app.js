@@ -281,6 +281,9 @@ async function viewPlaene(proj) {
     if (!files) throw e;
     offline = true;
   }
+  // Dieselbe Datei (Name und Größe) in Haupt- und Unterordner nur einmal zeigen
+  const seen = new Set();
+  files = files.filter((f) => { const k = f.name.toLowerCase() + "|" + f.size; if (seen.has(k)) return false; seen.add(k); return true; });
   // Ältere Stände erkennen: gleicher Name ohne _JJJJMMTT, neuestes Datum gewinnt
   const stem = (n) => n.replace(/\.pdf$/i, "").replace(/[_ -]?\d{8}$/, "");
   const dateOf = (n) => (n.match(/(\d{8})\.pdf$/i) || [])[1] || "";
