@@ -63,8 +63,8 @@ details[open] .g-title .arrow { transform: rotate(90deg); }
 .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
 .bar.over > i { background: var(--warn); }
 .pos { border-top: 1px solid var(--border); padding: 11px 14px; }
-.pos-head { display: flex; gap: 8px; align-items: baseline; }
-.pos .nr { font-size: 13px; color: var(--accent); font-weight: 700; flex: none; }
+.pos-head { display: block; }
+.pos .nr { display: block; font-size: 13px; line-height: 1.2; margin-bottom: 2px; color: var(--accent); font-weight: 700; }
 .pos .kurz { font-weight: 600; overflow-wrap: anywhere; }
 .pos-num { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; margin-top: 4px; color: var(--muted); }
 .pos-num b { color: var(--text); font-weight: 600; }
