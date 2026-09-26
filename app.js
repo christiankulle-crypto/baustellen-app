@@ -337,9 +337,11 @@ async function viewPlaene(proj) {
     const shown = files.filter((f) => !q || (f.name + " " + f.sub).toLowerCase().includes(q));
     $("#pllist").innerHTML = shown.map((f) => `<button class="card plan ${f.old ? "old" : ""}" data-i="${files.indexOf(f)}">
       <span class="pi">PDF</span><span><div class="pn">${esc(f.name.replace(/\.pdf$/i, ""))}</div>
-      <div class="pm">${f.mtime ? new Date(f.mtime).toLocaleDateString("de-DE") : ""} · ${nf(f.size / 1048576, 1, 1)} MB${f.sub ? " · " + esc(f.sub) : ""}${f.old ? " · älterer Stand" : ""}</div></span></button>`).join("") || `<div class="center">Keine Pläne gefunden.</div>`;
+      <div class="pm">${f.mtime ? new Date(f.mtime).toLocaleDateString("de-DE") : ""} · ${nf(f.size / 1048576, 1, 1)} MB${f.sub ? " · " + esc(f.sub) : ""}${f.old ? " · älterer Stand" : ""}${inkSet.has(f.path) ? ' · <b style="color:var(--accent)">✎ Skizze</b>' : ""}</div></span></button>`).join("") || `<div class="center">Keine Pläne gefunden.</div>`;
   };
   draw();
+  inkRefresh = () => Promise.resolve(ink("keys")).then((k) => { inkSet.clear(); (k || []).forEach((x) => inkSet.add(x)); if ($("#pllist")) draw(); });
+  inkRefresh();
   $("#pq").addEventListener("input", (e) => { plState.q = e.target.value; draw(); });
   $("#pllist").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (b) openPlan(files[+b.dataset.i]); });
 }
@@ -347,6 +349,9 @@ async function viewPlaene(proj) {
 /* ---------- PDF-Viewer mit Pinch-Zoom ---------- */
 const V = { doc: null, page: 1, s: 1, tx: 0, ty: 0, w: 0, h: 0, bytes: null, name: "" };
 const vw = () => $("#v-wrap");
+const ink = (fn, ...a) => (typeof Ink !== "undefined" ? Ink[fn](...a) : undefined);   // Skizzen-Modul (ink.js), optional
+const inkSet = new Set();                                                            // Pläne mit Skizze (für die Marke in der Liste)
+let inkRefresh = () => {};
 const vmsg = (t) => { $("#v-msg").innerHTML = t ? `<span>${esc(t)}</span>` : ""; };
 async function openPlan(f) {
   $("#viewer").hidden = false;
@@ -354,6 +359,7 @@ async function openPlan(f) {
   $("#v-title").textContent = f.name.replace(/\.pdf$/i, "");
   $("#v-page").textContent = "";
   V.name = f.name; V.doc = null; V.bytes = null;
+  ink("open", f.path);
   vmsg("Plan wird geladen …");
   const c = $("#v-canvas"); c.width = c.height = 1;
   try {
@@ -374,6 +380,7 @@ function closeViewer() {
   V.pg = null; $("#v-hi").style.visibility = "hidden";
   if (V.doc) { V.doc.destroy(); V.doc = null; }
   V.bytes = null; vmsg("");
+  Promise.resolve(ink("close")).then(() => inkRefresh());   // Skizze sichern, dann Marken in der Liste auffrischen
 }
 async function showPage(n) {
   V.page = Math.min(Math.max(1, n), V.doc.numPages);
@@ -430,7 +437,7 @@ function clampT() {
   V.tx = W <= cw ? (cw - W) / 2 : Math.min(0, Math.max(cw - W, V.tx));
   V.ty = H <= ch ? (ch - H) / 2 : Math.min(0, Math.max(ch - H, V.ty));
 }
-function applyT() { clampT(); $("#v-stage").style.transform = `translate(${V.tx}px,${V.ty}px) scale(${V.s})`; scheduleHi(); }
+function applyT() { clampT(); $("#v-stage").style.transform = `translate(${V.tx}px,${V.ty}px) scale(${V.s})`; scheduleHi(); ink("redraw"); }
 function zoomAt(px, py, s2) {
   s2 = Math.min(12, Math.max(1, s2));
   V.tx = px - (px - V.tx) * (s2 / V.s); V.ty = py - (py - V.ty) * (s2 / V.s); V.s = s2; applyT();
@@ -440,6 +447,7 @@ function zoomAt(px, py, s2) {
   let last = null, lastTap = 0;
   const rel = (e) => { const r = el.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   el.addEventListener("pointerdown", (e) => {
+    if (ink("down", e, rel(e))) { el.setPointerCapture(e.pointerId); return; }   // Stift/Zeichenmodus: zeichnen statt schieben
     el.setPointerCapture(e.pointerId); ptr.set(e.pointerId, rel(e));
     last = null;
     if (ptr.size === 1) {
@@ -448,6 +456,7 @@ function zoomAt(px, py, s2) {
     }
   });
   el.addEventListener("pointermove", (e) => {
+    if (ink("move", e, rel)) return;
     if (!ptr.has(e.pointerId)) return;
     const old = ptr.get(e.pointerId), cur = rel(e);
     if (ptr.size === 1) { V.tx += cur[0] - old[0]; V.ty += cur[1] - old[1]; ptr.set(e.pointerId, cur); applyT(); return; }
@@ -459,7 +468,7 @@ function zoomAt(px, py, s2) {
       last = { d, mid };
     }
   });
-  const up = (e) => { ptr.delete(e.pointerId); last = null; };
+  const up = (e) => { if (ink("up", e)) return; ptr.delete(e.pointerId); last = null; };
   el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
   el.addEventListener("wheel", (e) => { e.preventDefault(); const [x, y] = rel(e); zoomAt(x, y, V.s * Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
 })();

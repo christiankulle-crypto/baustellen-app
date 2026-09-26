@@ -1,7 +1,7 @@
 // Service Worker: hält nur die App-Hülle (Code, Bibliotheken, Icons) vor. Projektdaten und Pläne nie.
 // Strategie: erst Netz (damit Änderungen sofort ankommen), bei Funkloch oder langsamer Verbindung der Zwischenspeicher.
-const CACHE = "baustellen-app-v2";
-const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",
+const CACHE = "baustellen-app-v3";
+const SHELL = ["./", "index.html", "style.css", "app.js", "ink.js", "config.js", "manifest.webmanifest",
   "lib/msal-browser.min.js", "lib/pdf.min.js", "lib/pdf.worker.min.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 

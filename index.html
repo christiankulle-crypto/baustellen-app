@@ -27,7 +27,22 @@
     <button id="v-fit" aria-label="Einpassen">⤢</button>
     <button id="v-ext" aria-label="In Safari öffnen">↗</button>
   </div>
-  <div id="v-wrap"><div id="v-stage"><canvas id="v-canvas"></canvas></div><canvas id="v-hi"></canvas></div>
+  <div class="v-tools" id="v-tools">
+    <button id="t-draw" aria-label="Mit dem Finger zeichnen (der Stift zeichnet immer)">✎</button>
+    <button class="col on" data-c="#d62828" style="--c:#d62828" aria-label="Rot"></button>
+    <button class="col" data-c="#1d4ed8" style="--c:#1d4ed8" aria-label="Blau"></button>
+    <button class="col" data-c="#111111" style="--c:#111111" aria-label="Schwarz"></button>
+    <button class="col" data-c="#ffd60a" data-a="0.45" data-m="4" style="--c:#ffd60a" aria-label="Marker gelb"></button>
+    <button class="wd" data-w="2" aria-label="Dünn"><i style="height:2px"></i></button>
+    <button class="wd on" data-w="4" aria-label="Mittel"><i style="height:4px"></i></button>
+    <button class="wd" data-w="8" aria-label="Dick"><i style="height:7px"></i></button>
+    <button id="t-erase" aria-label="Radierer">⌫</button>
+    <button id="t-undo" aria-label="Rückgängig">↶</button>
+    <button id="t-eye" aria-label="Skizze ein- oder ausblenden">◉</button>
+    <button id="t-clear" aria-label="Alle Skizzen löschen">🗑</button>
+    <button id="t-share" aria-label="Kommentierte Fassung teilen">⤴</button>
+  </div>
+  <div id="v-wrap"><div id="v-stage"><canvas id="v-canvas"></canvas></div><canvas id="v-hi"></canvas><canvas id="v-ink"></canvas></div>
   <div id="v-msg" class="v-msg"></div>
 </div>
 
@@ -35,5 +50,6 @@
 <script src="lib/msal-browser.min.js"></script>
 <script src="lib/pdf.min.js"></script>
 <script src="app.js"></script>
+<script src="ink.js"></script>
 </body>
 </html>
