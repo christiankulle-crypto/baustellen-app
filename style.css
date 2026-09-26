@@ -64,7 +64,7 @@ details[open] .g-title .arrow { transform: rotate(90deg); }
 .bar.over > i { background: var(--warn); }
 .pos { border-top: 1px solid var(--border); padding: 11px 14px; }
 .pos-head { display: flex; gap: 8px; align-items: baseline; }
-.pos .nr { font-size: 13px; color: var(--muted); flex: none; }
+.pos .nr { font-size: 13px; color: var(--accent); font-weight: 700; flex: none; }
 .pos .kurz { font-weight: 600; overflow-wrap: anywhere; }
 .pos-num { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; margin-top: 4px; color: var(--muted); }
 .pos-num b { color: var(--text); font-weight: 600; }
@@ -103,6 +103,7 @@ mark { background: #ffe58a; color: #22271e; border-radius: 3px; }
 .v-page { font-size: 13px; min-width: 34px; text-align: center; color: var(--muted); }
 #v-wrap { flex: 1; position: relative; overflow: hidden; touch-action: none; background: #ffffff; }
 #v-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+#v-hi { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; visibility: hidden; }
 #v-canvas { display: block; width: 100%; height: 100%; background: #fff; }
 .v-msg { position: absolute; left: 0; right: 0; bottom: calc(var(--sab) + 16px); text-align: center; pointer-events: none; }
 .v-msg span { display: inline-block; background: rgba(0,0,0,.72); color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 14px; }

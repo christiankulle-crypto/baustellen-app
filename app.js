@@ -114,7 +114,7 @@ async function render() {
     if (parts[0] === "p") {
       const proj = projects.find((p) => p.slug === parts[1]);
       if (!proj) return (location.hash = "#/");
-      return parts[2] === "plaene" ? viewPlaene(proj) : viewLV(proj);
+      return parts[2] === "plaene" ? viewPlaene(proj) : parts[2] === "nachtraege" ? viewNachtraege(proj) : viewLV(proj);
     }
     viewHome();
   } catch (e) { fehler(e); }
@@ -137,7 +137,43 @@ function viewHome() {
     <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.ort || "")}${p.lose && p.lose.length > 1 ? ` · ${p.lose.length} Lose` : ""}</div></a>`).join("") ||
     `<div class="center">Keine Projekte eingetragen.</div>`);
 }
-const tabsFor = (proj, on) => `<a href="#/p/${proj.slug}/lv" class="${on === "lv" ? "on" : ""}">LV</a><a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>`;
+const tabsFor = (proj, on) => `<a href="#/p/${proj.slug}/lv" class="${on === "lv" ? "on" : ""}">LV</a>` +
+  (proj.nachtraege ? `<a href="#/p/${proj.slug}/nachtraege" class="${on === "na" ? "on" : ""}">Nachträge</a>` : "") +
+  `<a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>`;
+
+/* ---------- Nachträge ---------- */
+async function viewNachtraege(proj) {
+  const tabs = tabsFor(proj, "na");
+  shell({ title: proj.name, back: "#/", tabs }, loading());
+  const { j: na, offline, t } = await data.json(`${proj.slug}/nachtraege.json`);
+  const body = `
+    ${offline ? `<div class="note warn">Offline: Stand vom ${new Date(t).toLocaleString("de-DE")}.</div>` : ""}
+    <div class="kpis">
+      <div class="kpi"><div class="l">Nachträge</div><div class="v num">${na.nachtraege.length}</div></div>
+      <div class="kpi"><div class="l">Summe netto</div><div class="v num">${nf(na.summen.netto, 0, 0)} €</div></div>
+      <div class="kpi"><div class="l">davon geprüft</div><div class="v num">${nf(na.summen.netto_geprueft, 0, 0)} €</div></div>
+    </div>
+    <p class="meta">Nachtragsangebote der Auftragnehmerin, netto ohne MwSt. „Geprüft“ heißt: Deine geprüfte Fassung (Datei mit „_gep“) liegt im Nachtragsordner. Bedarfspositionen sind nicht in der Summe. Ein Abrechnungsstand je Nachtrag wird noch nicht ausgewertet.</p>
+    ${na.nachtraege.map((n) => `<details class="grp" ${naOpen.has(n.id) ? "open" : ""} data-n="${esc(n.id)}"><summary>
+        <div class="g-title"><span>${esc(n.id)} · ${esc(n.titel)}</span><span class="arrow">›</span></div>
+        <div class="g-sub"><span>${n.datum ? "Angebot vom " + esc(n.datum) : "Angebot"}${n.angebot_nr ? " · " + esc(n.angebot_nr) : ""}</span><b class="num" style="color:var(--text)">${eur(n.summe_netto)}</b></div>
+        <div style="margin-top:6px"><span class="tag ${n.status === "geprüft" ? "g" : ""}">${esc(n.status)}</span>${n.hinweis ? '<span class="tag">Hinweis</span>' : ""}</div></summary>
+        ${n.hinweis ? `<div class="note warn" style="margin:0 14px 10px">${esc(n.hinweis)}</div>` : ""}
+        ${n.positionen.map((p) => `<div class="pos" data-x="1">
+          <div class="pos-head"><span class="nr mono">${esc(p.nr)}</span><span class="kurz">${esc(p.kurz)}${p.bedarf ? '<span class="tag">Bedarf, nicht in Summe</span>' : ""}</span></div>
+          <div class="pos-num"><span class="num">${p.einheit === "pauschal" || p.einheit === "psch" ? "pauschal" : menge(p.menge) + " " + esc(p.einheit)} × ${eur(p.ep)}</span><b class="num">${eur(p.gp)}</b></div>
+          <div class="detail" hidden>${esc(p.lang)}</div></div>`).join("") || `<div class="pos"><span class="meta">Keine Positionen ausgelesen.</span></div>`}
+      </details>`).join("")}
+    <p class="meta">Datenstand vom ${esc(na.erzeugt)}</p>`;
+  shell({ title: proj.name, back: "#/", tabs }, body);
+  $("main").addEventListener("click", (e) => {
+    const sum = e.target.closest("summary");
+    if (sum) { const d = sum.parentElement; setTimeout(() => (d.open ? naOpen.add(d.dataset.n) : naOpen.delete(d.dataset.n)), 0); return; }
+    const pos = e.target.closest(".pos[data-x]");
+    if (pos) { const d = pos.querySelector(".detail"); d.hidden = !d.hidden; }
+  });
+}
+const naOpen = new Set();
 
 /* ---------- LV-Ansicht ---------- */
 const lvState = { los: {}, q: "", filter: "alle", open: new Set() };
@@ -217,7 +253,7 @@ async function viewLV(proj) {
     const x = pct(p), over = x > 1.005;
     const open = lvState.open.has(p.nr);
     return `<div class="pos ${open ? "open" : ""}" data-nr="${esc(p.nr)}">
-      <div class="pos-head"><span class="nr mono">${esc(p.nr.split(".").slice(2).join(".") || p.nr)}</span>
+      <div class="pos-head"><span class="nr mono">${esc(p.nr)}</span>
         <span class="kurz">${hl(p.kurz, q)}${p.bedarf ? '<span class="tag">Bedarf</span>' : ""}${p.gekuerzt ? '<span class="tag">gekürzt</span>' : ""}</span></div>
       <div class="pos-num"><span class="num">${menge(p.menge)} ${esc(p.einheit)} × ${eur(p.ep)}</span><b class="num">${eur(p.gp)}</b></div>
       <div class="bar ${over ? "over" : ""}"><i style="width:${Math.min(100, x * 100)}%"></i></div>
@@ -334,6 +370,8 @@ async function openPlan(f) {
 }
 function closeViewer() {
   $("#viewer").hidden = true; document.body.style.overflow = "";
+  clearTimeout(hiTimer); if (hiTask) { try { hiTask.cancel(); } catch { /* egal */ } hiTask = null; }
+  V.pg = null; $("#v-hi").style.visibility = "hidden";
   if (V.doc) { V.doc.destroy(); V.doc = null; }
   V.bytes = null; vmsg("");
 }
@@ -347,10 +385,11 @@ async function showPage(n) {
   const base = page.getViewport({ scale: 1 });
   const fit = Math.min(cw / base.width, ch / base.height);       // einpassen
   V.w = base.width * fit; V.h = base.height * fit;
-  // Auflösung: bis ca. 4-fach scharf zoombar, iOS-Canvas-Grenze (~16,7 Mio. Pixel) beachten
+  V.pg = page; V.fit = fit;
+  // Grundbild in mäßiger Auflösung (schnell, spart Speicher). Schärfe kommt vom Ausschnitts-Neuaufbau (renderHi).
   const dpr = window.devicePixelRatio || 1;
-  let k = fit * dpr * 4;
-  const maxPx = 14e6;
+  let k = fit * dpr * 1.5;
+  const maxPx = 6e6;
   if (base.width * k * base.height * k > maxPx) k = Math.sqrt(maxPx / (base.width * base.height));
   const vp = page.getViewport({ scale: k });
   const c = $("#v-canvas");
@@ -362,12 +401,36 @@ async function showPage(n) {
   fitView();
 }
 function fitView() { V.s = 1; V.tx = (vw().clientWidth - V.w) / 2; V.ty = (vw().clientHeight - V.h) / 2; applyT(); }
+/* Scharfstellen: Nach Zoom/Verschieben wird nur der sichtbare Ausschnitt in voller Bildschirmauflösung neu gezeichnet. */
+let hiTimer = null, hiTask = null, hiSeq = 0;
+function scheduleHi() {
+  $("#v-hi").style.visibility = "hidden";
+  if (hiTask) { try { hiTask.cancel(); } catch { /* egal */ } hiTask = null; }
+  clearTimeout(hiTimer);
+  if (V.pg) hiTimer = setTimeout(renderHi, 200);
+}
+async function renderHi() {
+  const pg = V.pg;
+  if (!pg || $("#viewer").hidden) return;
+  const seq = ++hiSeq, dpr = window.devicePixelRatio || 1, wrap = vw(), hi = $("#v-hi");
+  const w = Math.round(wrap.clientWidth * dpr), h = Math.round(wrap.clientHeight * dpr);
+  if (w * h > 12e6) return;
+  const off = document.createElement("canvas");
+  off.width = w; off.height = h;
+  const vp = pg.getViewport({ scale: V.fit * V.s * dpr, offsetX: V.tx * dpr, offsetY: V.ty * dpr });
+  hiTask = pg.render({ canvasContext: off.getContext("2d"), viewport: vp });
+  try { await hiTask.promise; } catch { return; }   // abgebrochen, weil weitergezoomt wurde
+  if (seq !== hiSeq) return;
+  hi.width = w; hi.height = h;
+  hi.getContext("2d").drawImage(off, 0, 0);
+  hi.style.visibility = "visible";
+}
 function clampT() {
   const cw = vw().clientWidth, ch = vw().clientHeight, W = V.w * V.s, H = V.h * V.s;
   V.tx = W <= cw ? (cw - W) / 2 : Math.min(0, Math.max(cw - W, V.tx));
   V.ty = H <= ch ? (ch - H) / 2 : Math.min(0, Math.max(ch - H, V.ty));
 }
-function applyT() { clampT(); $("#v-stage").style.transform = `translate(${V.tx}px,${V.ty}px) scale(${V.s})`; }
+function applyT() { clampT(); $("#v-stage").style.transform = `translate(${V.tx}px,${V.ty}px) scale(${V.s})`; scheduleHi(); }
 function zoomAt(px, py, s2) {
   s2 = Math.min(12, Math.max(1, s2));
   V.tx = px - (px - V.tx) * (s2 / V.s); V.ty = py - (py - V.ty) * (s2 / V.s); V.s = s2; applyT();
@@ -410,7 +473,11 @@ $("#v-ext").onclick = () => {
   window.open(u, "_blank");
   setTimeout(() => URL.revokeObjectURL(u), 120000);
 };
-window.addEventListener("resize", () => { if (!$("#viewer").hidden && V.doc) { applyT(); } });
+let resizeTimer = null;   // Handy drehen: neu einpassen
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (!$("#viewer").hidden && V.doc) showPage(V.page); }, 250);
+});
 
 /* ---------- Start ---------- */
 window.addEventListener("hashchange", () => { if (projects || DEMO || account) render(); });

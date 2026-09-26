@@ -1,5 +1,6 @@
 // Service Worker: hält nur die App-Hülle (Code, Bibliotheken, Icons) vor. Projektdaten und Pläne nie.
-const CACHE = "baustellen-app-v1";
+// Strategie: erst Netz (damit Änderungen sofort ankommen), bei Funkloch oder langsamer Verbindung der Zwischenspeicher.
+const CACHE = "baustellen-app-v2";
 const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",
   "lib/msal-browser.min.js", "lib/pdf.min.js", "lib/pdf.worker.min.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
@@ -16,10 +17,11 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const u = new URL(e.request.url);
   if (e.request.method !== "GET" || u.origin !== location.origin || u.pathname.startsWith("/demo-")) return;
-  // Stale-while-revalidate für die App-Hülle
-  e.respondWith(caches.open(CACHE).then(async (c) => {
-    const hit = await c.match(e.request, { ignoreSearch: true });
-    const net = fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
-    return hit || net;
-  }));
+  e.respondWith((async () => {
+    const c = await caches.open(CACHE);
+    const netz = fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; });
+    const limit = new Promise((_, rej) => setTimeout(() => rej(new Error("langsam")), 4000));
+    try { return await Promise.race([netz, limit]); }
+    catch { return (await c.match(e.request, { ignoreSearch: true })) || netz; }
+  })());
 });
