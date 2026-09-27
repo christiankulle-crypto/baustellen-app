@@ -7,7 +7,7 @@ const Ink = (() => {
   const DB = "baustellen-skizzen", ST = "plaene";
   const S = { key: null, strokes: [], hist: [], draw: false, erase: false, color: "#d62828", alpha: 1, wpx: 4, mult: 1,
               visible: true, cur: null, pid: null, pen: false, erased: [], last: null,
-              tool: null, measure: null, calib: null, pendingTool: null, scale: null };
+              tool: null, measure: null, calib: null, pendingTool: null, scale: null, dragPt: null };
   let dbp = null, saveT = null, raf = 0;
 
   /* ---- Speicher ---- */
@@ -147,10 +147,14 @@ const Ink = (() => {
   /* Gibt true zurück, wenn Ink das Ereignis behandelt (dann macht der Viewer kein Schieben/Zoomen). */
   function down(e, [x, y]) {
     if (!V.pg) return false;
+    if (e.pointerType === "mouse" && e.button !== 0) return false;   // nur linke Maustaste zeichnet/misst/radiert, Mitte/Rechts bleibt zum Verschieben frei
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== null) return true;   // Handballen/zweiten Finger ignorieren
       S.pid = e.pointerId;
-      if (S.tool === "calib") addCalibPoint(x, y); else addMeasurePoint(x, y);
+      if (S.tool === "calib") { addCalibPoint(x, y); return true; }
+      const hit = findNearbyPoint(x, y);
+      if (hit) { S.dragPt = hit; frame(); return true; }   // vorhandenen Punkt anfassen statt neuen zu setzen
+      addMeasurePoint(x, y);
       return true;
     }
     if (S.pid !== null && S.pen && e.pointerType === "touch") return true;   // Handballen ignorieren, solange der Stift zeichnet
@@ -161,7 +165,16 @@ const Ink = (() => {
     frame(); return true;
   }
   function move(e, rel) {
-    if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") return S.pid === e.pointerId;   // Punkt sitzt schon, Ziehen tut nichts
+    if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
+      if (S.pid !== e.pointerId) return false;
+      if (S.dragPt) {
+        const [x, y] = rel(e), [nx, ny] = toN(x, y);
+        S.dragPt.owner.p[S.dragPt.i] = [nx, ny];
+        if (S.dragPt.owner !== S.measure) S.dragPt.owner.label = shapeLabel(S.dragPt.owner.type, S.dragPt.owner.p);   // fertige Messung: Beschriftung sofort nachrechnen
+        frame(); renderBar();
+      }
+      return true;   // ohne Treffer: Punkt sitzt schon, Ziehen tut sonst nichts
+    }
     if (S.pid !== e.pointerId) return false;
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of (evs.length ? evs : [e])) {
@@ -177,7 +190,9 @@ const Ink = (() => {
   function up(e) {
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== e.pointerId) return false;
-      S.pid = null; return true;
+      S.pid = null;
+      if (S.dragPt) { if (S.dragPt.owner !== S.measure) save(); S.dragPt = null; frame(); renderBar(); }
+      return true;
     }
     if (S.pid !== e.pointerId) return false;
     S.pid = null;
@@ -192,7 +207,20 @@ const Ink = (() => {
     save(); redraw(); updateUi();
   };
 
-  /* ---- Strecke/Fläche: Punkt für Punkt ---- */
+  /* ---- Strecke/Fläche: Punkt für Punkt, vorhandene Punkte anfassbar ---- */
+  function findNearbyPoint(x, y) {
+    const R = 20, sc = V.w * V.s;
+    const test = (arr, owner) => {
+      for (let i = 0; i < arr.length; i++) {
+        const sx = V.tx + arr[i][0] * sc, sy = V.ty + arr[i][1] * V.h * V.s;
+        if (Math.hypot(sx - x, sy - y) <= R) return { owner, i };
+      }
+      return null;
+    };
+    if (S.measure && S.measure.pg === V.page) { const h = test(S.measure.p, S.measure); if (h) return h; }
+    for (const st of S.strokes) { if (st.pg === V.page && st.type === S.tool) { const h = test(st.p, st); if (h) return h; } }
+    return null;
+  }
   function addMeasurePoint(x, y) {
     if (!S.measure) S.measure = { type: S.tool, pg: V.page, p: [] };
     S.measure.p.push(toN(x, y));
@@ -204,7 +232,7 @@ const Ink = (() => {
     if (!S.measure.p.length) S.measure = null;
     frame(); renderBar();
   }
-  function cancelMeasure() { S.measure = null; frame(); renderBar(); }
+  function cancelMeasure() { S.measure = null; S.dragPt = null; frame(); renderBar(); }
   function finishMeasure() {
     if (!S.measure) return;
     const n = S.measure.p.length;
@@ -237,6 +265,7 @@ const Ink = (() => {
   function pageChanged() {   // Seite gewechselt (nicht nur Fenstergröße): unfertige Messung verwerfen, sie gehörte zur alten Seite
     if (S.measure && S.measure.pg !== V.page) cancelMeasure();
     if (S.tool === "calib") S.calib = [];
+    S.dragPt = null;
   }
 
   /* ---- Maßstab: Dropdown oder Kalibrieren (zwei Punkte antippen, echte Länge eingeben) ---- */
@@ -319,7 +348,7 @@ const Ink = (() => {
   /* ---- Öffnen, Schließen, Liste ---- */
   async function open(key) {
     S.key = key; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.visible = true; S.erase = false; S.draw = false;
-    S.tool = null; S.measure = null; S.calib = null; S.pendingTool = null; S.scale = null;
+    S.tool = null; S.measure = null; S.calib = null; S.pendingTool = null; S.scale = null; S.dragPt = null;
     document.getElementById("v-scale").hidden = true; renderBar();
     updateUi();
     try { const r = await tx("readonly", (s) => s.get(key)); if (r && S.key === key) { S.strokes = r.strokes || []; S.scale = r.mProPt || null; updateUi(); redraw(); } } catch { /* ohne Speicher weiterarbeiten */ }
@@ -327,7 +356,7 @@ const Ink = (() => {
   async function close() {
     clearTimeout(saveT);
     if (S.key) await persist(S.key, S.strokes, S.scale);
-    S.key = null; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.tool = null; S.measure = null; S.calib = null;
+    S.key = null; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.tool = null; S.measure = null; S.calib = null; S.dragPt = null;
     const c = cv(); c.getContext("2d").clearRect(0, 0, c.width, c.height);
   }
 
