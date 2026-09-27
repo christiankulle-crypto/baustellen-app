@@ -387,9 +387,11 @@ async function showPage(n) {
   const multi = V.doc.numPages > 1;
   $("#v-page").textContent = multi ? `${V.page}/${V.doc.numPages}` : "";
   for (const id of ["#v-prev", "#v-next"]) $(id).hidden = !multi;
+  ink("pageChanged");   // laufende Messung verwerfen, wenn tatsächlich die Seite wechselt
   const page = await V.doc.getPage(V.page);
   const cw = vw().clientWidth, ch = vw().clientHeight;
   const base = page.getViewport({ scale: 1 });
+  V.baseW = base.width; V.baseH = base.height;   // echte PDF-Punkte der Seite, für Maßstab/Messen
   const fit = Math.min(cw / base.width, ch / base.height);       // einpassen
   V.w = base.width * fit; V.h = base.height * fit;
   V.pg = page; V.fit = fit;

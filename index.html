@@ -37,12 +37,37 @@
     <button class="wd on" data-w="4" aria-label="Mittel"><i style="height:4px"></i></button>
     <button class="wd" data-w="8" aria-label="Dick"><i style="height:7px"></i></button>
     <button id="t-erase" aria-label="Radierer">⌫</button>
+    <span class="v-sep"></span>
+    <button id="t-mline" aria-label="Strecke messen">📏</button>
+    <button id="t-marea" aria-label="Fläche messen">📐</button>
+    <button id="t-scale" aria-label="Maßstab einstellen">⚙</button>
+    <span class="v-sep"></span>
     <button id="t-undo" aria-label="Rückgängig">↶</button>
     <button id="t-eye" aria-label="Skizze ein- oder ausblenden">◉</button>
     <button id="t-clear" aria-label="Alle Skizzen löschen">🗑</button>
     <button id="t-share" aria-label="Kommentierte Fassung teilen">⤴</button>
   </div>
-  <div id="v-wrap"><div id="v-stage"><canvas id="v-canvas"></canvas></div><canvas id="v-hi"></canvas><canvas id="v-ink"></canvas></div>
+  <div id="v-wrap">
+    <div id="v-stage"><canvas id="v-canvas"></canvas></div><canvas id="v-hi"></canvas><canvas id="v-ink"></canvas>
+    <div class="v-panel" id="v-scale" hidden>
+      <div class="v-panel-row"><b>Maßstab des Plans</b><button id="v-scale-close" aria-label="Schließen">✕</button></div>
+      <p class="hint">Für Strecke und Fläche muss der Maßstab bekannt sein.</p>
+      <select id="v-scale-sel">
+        <option value="">Maßstab wählen …</option>
+        <option value="20">1 : 20</option>
+        <option value="25">1 : 25</option>
+        <option value="50">1 : 50</option>
+        <option value="75">1 : 75</option>
+        <option value="100">1 : 100</option>
+        <option value="150">1 : 150</option>
+        <option value="200">1 : 200</option>
+        <option value="250">1 : 250</option>
+        <option value="500">1 : 500</option>
+        <option value="1000">1 : 1000</option>
+      </select>
+      <button class="wide" id="v-scale-calib">Stattdessen kalibrieren: bekannte Strecke antippen</button>
+    </div>
+  </div>
   <div id="v-msg" class="v-msg"></div>
 </div>
 

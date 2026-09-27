@@ -111,6 +111,17 @@ mark { background: #ffe58a; color: #22271e; border-radius: 3px; }
 .v-tools .col { width: 30px; height: 30px; margin: 0 2px; border-radius: 50%; background: var(--c); box-shadow: none; border: 3px solid var(--bg); outline: 2px solid transparent; }
 .v-tools .col.on { background: var(--c); outline-color: var(--text); box-shadow: none; }
 .v-tools .wd i { display: block; width: 20px; background: var(--text); border-radius: 3px; }
+.v-sep { flex: none; width: 1px; height: 24px; background: var(--border); margin: 0 2px; align-self: center; }
+.v-panel { position: absolute; top: 8px; left: 8px; right: 8px; max-width: 340px; margin: 0 auto; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; z-index: 20; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.v-panel-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.v-panel-row button { width: 30px; height: 30px; border-radius: 8px; }
+.v-panel .hint { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.v-panel select { width: 100%; padding: 11px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; margin-bottom: 10px; }
+.v-panel button.wide { display: block; width: 100%; padding: 11px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 14px; }
+.v-mbar { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.78); color: #fff; padding: 9px 10px; border-radius: 12px; pointer-events: auto; flex-wrap: wrap; justify-content: center; }
+.v-mbar .v-mval { font-weight: 700; font-variant-numeric: tabular-nums; margin-right: 2px; white-space: nowrap; }
+.v-mbar button { background: rgba(255,255,255,.18); color: #fff; border-radius: 8px; padding: 8px 12px; font-size: 14px; white-space: nowrap; }
+.v-mbar button:disabled { opacity: .35; }
 #v-ink { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
 .v-send { pointer-events: auto; background: var(--accent); color: #fff; font-weight: 700; padding: 12px 20px; border-radius: 12px; }
 #v-hi { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; visibility: hidden; }
