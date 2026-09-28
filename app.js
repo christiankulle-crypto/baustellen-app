@@ -69,7 +69,7 @@ const data = {
     }
   },
   async list(path) { // Ordnerinhalt (nur Metadaten)
-    if (DEMO) return (await (await fetch("/demo-plaene/index.json")).json()).filter((x) => x.folder === path || path === "");
+    if (DEMO) return await (await fetch("/demo-plaene/index.json?path=" + encodeURIComponent(path))).json();
     let url = `${GRAPH}/root:/${enc(path)}:/children?$select=name,size,lastModifiedDateTime,file,folder&$top=200`;
     const out = [];
     while (url) {
@@ -80,7 +80,7 @@ const data = {
     return out;
   },
   async blob(path, name) {
-    if (DEMO) return await (await fetch("/demo-plaene/f/" + encodeURIComponent(name))).arrayBuffer();
+    if (DEMO) return await (await fetch("/demo-plaene/f/" + encodeURIComponent(name) + "?path=" + encodeURIComponent(path.replace(/\/[^/]*$/, "")))).arrayBuffer();
     try { return await (await graph(`${GRAPH}/root:/${enc(path)}:/content`)).arrayBuffer(); }
     catch (e) {
       if (e instanceof AuthError || e instanceof NotFound) throw e;
@@ -114,7 +114,7 @@ async function render() {
     if (parts[0] === "p") {
       const proj = projects.find((p) => p.slug === parts[1]);
       if (!proj) return (location.hash = "#/");
-      return parts[2] === "plaene" ? viewPlaene(proj) : parts[2] === "nachtraege" ? viewNachtraege(proj) : viewLV(proj);
+      return parts[2] === "plaene" ? viewPlaene(proj) : parts[2] === "nachtraege" ? viewNachtraege(proj) : parts[2] === "bauzeit" ? viewBauzeit(proj) : viewLV(proj);
     }
     viewHome();
   } catch (e) { fehler(e); }
@@ -138,8 +138,38 @@ function viewHome() {
     `<div class="center">Keine Projekte eingetragen.</div>`);
 }
 const tabsFor = (proj, on) => `<a href="#/p/${proj.slug}/lv" class="${on === "lv" ? "on" : ""}">LV</a>` +
+  (proj.bauzeit ? `<a href="#/p/${proj.slug}/bauzeit" class="${on === "bz" ? "on" : ""}">Bauzeit</a>` : "") +
   (proj.nachtraege ? `<a href="#/p/${proj.slug}/nachtraege" class="${on === "na" ? "on" : ""}">Nachträge</a>` : "") +
   `<a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>`;
+
+/* ---------- Bauzeitenplan ---------- */
+async function viewBauzeit(proj) {
+  const tabs = tabsFor(proj, "bz");
+  shell({ title: proj.name, back: "#/", tabs }, loading());
+  if (!proj.bauzeit) return shell({ title: proj.name, back: "#/", tabs }, `<div class="center">Für dieses Projekt ist kein Bauzeitenplan hinterlegt.</div>`);
+  const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.bauzeit}`;
+  let files, offline = false;
+  const key = "cache:bauzeit:" + proj.slug;
+  try {
+    const top = await data.list(base);
+    files = top.filter((it) => !it.folder && /\.pdf$/i.test(it.name))
+      .map((it) => ({ name: it.name, size: it.size, mtime: it.lastModifiedDateTime, path: base + "/" + it.name }));
+    files.sort((a, b) => (b.mtime || "").localeCompare(a.mtime || ""));   // neuester Stand zuerst
+    store.set(key, files);
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+    files = store.get(key);
+    if (!files) throw e;
+    offline = true;
+  }
+  shell({ title: proj.name, back: "#/", tabs }, `
+    ${offline ? `<div class="note warn">Offline: gespeicherte Liste, der Plan lässt sich nicht laden.</div>` : ""}
+    ${files.map((f, i) => `<button class="card plan" data-i="${i}">
+      <span class="pi">PDF</span><span><div class="pn">${esc(f.name.replace(/\.pdf$/i, ""))}</div>
+      <div class="pm">${f.mtime ? new Date(f.mtime).toLocaleDateString("de-DE") : ""} · ${nf(f.size / 1048576, 1, 1)} MB</div></span></button>`).join("") ||
+      `<div class="center">Kein Bauzeitenplan im Ordner gefunden.</div>`}`);
+  $("main").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (b) openPlan(files[+b.dataset.i]); });
+}
 
 /* ---------- Nachträge ---------- */
 async function viewNachtraege(proj) {
