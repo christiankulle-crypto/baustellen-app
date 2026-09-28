@@ -222,11 +222,11 @@ async function viewNachtraege(proj) {
       <div class="kpi"><div class="l">Summe netto</div><div class="v num">${nf(na.summen.netto, 0, 0)} €</div></div>
       <div class="kpi"><div class="l">davon geprüft</div><div class="v num">${nf(na.summen.netto_geprueft, 0, 0)} €</div></div>
     </div>
-    <p class="meta">Nachtragsangebote der Auftragnehmerin, netto ohne MwSt. „Geprüft“ heißt: Deine geprüfte Fassung (Datei mit „_gep“) liegt im Nachtragsordner. Bedarfspositionen sind nicht in der Summe. Ein Abrechnungsstand je Nachtrag wird noch nicht ausgewertet.</p>
+    <p class="meta">Nachtragsangebote der Auftragnehmerin, netto ohne MwSt. „Geprüft“ heißt: Die geprüfte Fassung (Datei mit „_gep“) liegt im Nachtragsordner und ist nicht älter als das aktuelle Angebot. „Überarbeitet“: Es gibt eine neuere Angebotsfassung, geprüft ist erst die frühere. Bedarfspositionen sind nicht in der Summe. Ein Abrechnungsstand je Nachtrag wird noch nicht ausgewertet.</p>
     ${na.nachtraege.map((n) => `<details class="grp" ${naOpen.has(n.id) ? "open" : ""} data-n="${esc(n.id)}"><summary>
         <div class="g-title"><span>${esc(n.id)} · ${esc(n.titel)}</span><span class="arrow">›</span></div>
         <div class="g-sub"><span>${n.datum ? "Angebot vom " + esc(n.datum) : "Angebot"}${n.angebot_nr ? " · " + esc(n.angebot_nr) : ""}</span><b class="num" style="color:var(--text)">${eur(n.summe_netto)}</b></div>
-        <div style="margin-top:6px"><span class="tag ${n.status === "geprüft" ? "g" : ""}">${esc(n.status)}</span>${n.hinweis ? '<span class="tag">Hinweis</span>' : ""}</div></summary>
+        <div style="margin-top:6px"><span class="tag ${n.status === "geprüft" ? "g" : ""}">${esc(n.status)}${n.status === "geprüft" && n.geprueft_am ? " " + esc(n.geprueft_am) : ""}</span>${n.hinweis ? '<span class="tag">Hinweis</span>' : ""}</div></summary>
         ${n.hinweis ? `<div class="note warn" style="margin:0 14px 10px">${esc(n.hinweis)}</div>` : ""}
         ${n.positionen.map((p) => `<div class="pos" data-x="1">
           <div class="pos-head"><span class="nr mono">${esc(p.nr)}</span><span class="kurz">${esc(p.kurz)}${p.bedarf ? '<span class="tag">Bedarf, nicht in Summe</span>' : ""}</span></div>
