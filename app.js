@@ -263,7 +263,11 @@ async function viewLV(proj) {
   const stand = lv.rechnung
     ? `${lv.rechnung.ar_nr}. Abschlagsrechnung vom ${lv.rechnung.rechnungsdatum}, geprüft (${esc(lv.rechnung.datei)})`
     : "Noch keine geprüfte Abschlagsrechnung";
-  const chips = [["alle", "Alle"], ["arbeit", "In Arbeit"], ["offen", "Offen"], ["fertig", "Fertig"], ["ueber", "Überschritten"], ["gekuerzt", "Gekürzt"]];
+  const ocr = lv.rechnung && lv.rechnung.ocr;
+  const ocrNote = !ocr ? "" : ocr.summe_stimmt
+    ? `<p class="meta">Rechnung liegt nur als Scan vor und wurde per Texterkennung gelesen. Kontrolle: Summe der Positionen ${eur(+ocr.summe_positionen)} = Rechnungssumme.</p>`
+    : `<div class="note warn">Rechnung per Texterkennung gelesen, die Summe geht nicht auf (Positionen ${eur(+ocr.summe_positionen)}, Rechnung ${ocr.summe_rechnung ? eur(+ocr.summe_rechnung) : "nicht gefunden"}). Einzelwerte bitte am Original prüfen.</div>`;
+  const chips =[["alle", "Alle"], ["arbeit", "In Arbeit"], ["offen", "Offen"], ["fertig", "Fertig"], ["ueber", "Überschritten"], ["gekuerzt", "Gekürzt"]];
   const body = `
     ${lv.los_name && proj.lose.length > 1 ? `<div class="chips">${proj.lose.map((l) => `<button class="chip ${l.id === losId ? "on" : ""}" data-los="${l.id}">${esc(l.name)}</button>`).join("")}</div>` : ""}
     ${offline ? `<div class="note warn">Offline: Stand vom ${new Date(t).toLocaleString("de-DE")}.</div>` : ""}
@@ -275,6 +279,7 @@ async function viewLV(proj) {
     </div>
     <div class="bar" style="margin:-2px 0 8px"><i style="width:${Math.min(100, (lv.summen.ist_netto / lv.summen.soll_netto) * 100)}%"></i></div>
     <p class="meta">Stand: ${stand}. Netto, ohne MwSt.</p>
+    ${ocrNote}
     <div class="search"><input type="search" id="q" placeholder="Suchen: Nummer, Kurztext, Langtext" value="${esc(lvState.q)}" autocomplete="off"></div>
     <div class="chips" id="filters">${chips.map(([k, l]) => `<button class="chip ${lvState.filter === k ? "on" : ""}" data-f="${k}">${l}</button>`).join("")}</div>
     <div id="lvlist"></div>
@@ -306,7 +311,7 @@ async function viewLV(proj) {
       const shown = list.filter((p) => passes(p) && (!q || p.nr.includes(q) || p.kurz.toLowerCase().includes(q) || p.lang.toLowerCase().includes(q)));
       if (!shown.length) continue;
       hits += shown.length;
-      const soll = list.reduce((a, p) => a + p.gp, 0), ist = list.reduce((a, p) => a + p.ist_gp, 0);
+      const soll = list.reduce((a, p) => a + (p.bedarf ? 0 : p.gp), 0), ist = list.reduce((a, p) => a + p.ist_gp, 0);   // Bedarfspositionen nicht in der Auftragssumme
       const gp = soll > 0 ? (ist / soll) * 100 : 0;
       const isOpen = q || lvState.filter !== "alle" || lvState.open.has(g);
       html += `<details class="grp" data-g="${g}" ${isOpen ? "open" : ""}><summary>
@@ -367,18 +372,16 @@ async function viewPlaene(proj) {
   const key = "cache:plaene:" + proj.slug;
   let files, offline = false;
   try {
-    const top = await data.list(DEMO ? "" : base);
+    const top = await data.list(base);
     files = [];
     const subs = [];
     for (const it of top) {
       if (it.folder) { if (!SKIP_DIRS.test(it.name)) subs.push(it); }
       else if (/\.pdf$/i.test(it.name)) files.push({ name: it.name, size: it.size, mtime: it.lastModifiedDateTime, path: base + "/" + it.name, sub: "" });
     }
-    if (!DEMO) {
-      const res = await Promise.all(subs.map((s) => data.list(base + "/" + s.name).then((l) => l.map((it) => ({ it, s })), () => [])));
-      for (const r of res) for (const { it, s } of r)
-        if (!it.folder && /\.pdf$/i.test(it.name)) files.push({ name: it.name, size: it.size, mtime: it.lastModifiedDateTime, path: base + "/" + s.name + "/" + it.name, sub: s.name });
-    }
+    const res = await Promise.all(subs.map((s) => data.list(base + "/" + s.name).then((l) => l.map((it) => ({ it, s })), () => [])));
+    for (const r of res) for (const { it, s } of r)
+      if (!it.folder && /\.pdf$/i.test(it.name)) files.push({ name: it.name, size: it.size, mtime: it.lastModifiedDateTime, path: base + "/" + s.name + "/" + it.name, sub: s.name });
     store.set(key, files);
   } catch (e) {
     if (e instanceof AuthError) throw e;
@@ -390,8 +393,11 @@ async function viewPlaene(proj) {
   const seen = new Set();
   files = files.filter((f) => { const k = f.name.toLowerCase() + "|" + f.size; if (seen.has(k)) return false; seen.add(k); return true; });
   // Ältere Stände erkennen: gleicher Name ohne _JJJJMMTT, neuestes Datum gewinnt
-  const stem = (n) => n.replace(/\.pdf$/i, "").replace(/[_ -]?\d{8}$/, "");
-  const dateOf = (n) => (n.match(/(\d{8})\.pdf$/i) || [])[1] || "";
+  // Zwei Namensmuster: "21-085-A-007-Pflanzplan_20260922.pdf" (Datum hinten) und
+  // "260909_B002c_Albsiedlung Lageplan BA1.pdf" (Datum vorn, Planindex-Buchstabe hinter der Plannummer)
+  const VORN = /^(\d{6})_([A-Z]+\d+)[a-z]?_(.+)\.pdf$/i;
+  const stem = (n) => { const m = n.match(VORN); return m ? `${m[2]}_${m[3]}`.toLowerCase() : n.replace(/\.pdf$/i, "").replace(/[_ -]?\d{8}$/, ""); };
+  const dateOf = (n) => { const m = n.match(VORN); return m ? "20" + m[1] : (n.match(/(\d{8})\.pdf$/i) || [])[1] || ""; };
   const newest = {};
   for (const f of files) { const k = stem(f.name); if (!newest[k] || dateOf(f.name) > dateOf(newest[k])) newest[k] = f.name; }
   for (const f of files) f.old = dateOf(f.name) !== "" && newest[stem(f.name)] !== f.name;
