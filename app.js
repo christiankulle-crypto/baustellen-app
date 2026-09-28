@@ -142,33 +142,72 @@ const tabsFor = (proj, on) => `<a href="#/p/${proj.slug}/lv" class="${on === "lv
   (proj.nachtraege ? `<a href="#/p/${proj.slug}/nachtraege" class="${on === "na" ? "on" : ""}">Nachträge</a>` : "") +
   `<a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>`;
 
-/* ---------- Bauzeitenplan ---------- */
+/* ---------- Bauzeitenplan (Balkendiagramm wie im BGS-Dashboard, Daten automatisch aus dem PDF) ---------- */
 async function viewBauzeit(proj) {
   const tabs = tabsFor(proj, "bz");
   shell({ title: proj.name, back: "#/", tabs }, loading());
-  if (!proj.bauzeit) return shell({ title: proj.name, back: "#/", tabs }, `<div class="center">Für dieses Projekt ist kein Bauzeitenplan hinterlegt.</div>`);
-  const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.bauzeit}`;
-  let files, offline = false;
-  const key = "cache:bauzeit:" + proj.slug;
-  try {
-    const top = await data.list(base);
-    files = top.filter((it) => !it.folder && /\.pdf$/i.test(it.name))
-      .map((it) => ({ name: it.name, size: it.size, mtime: it.lastModifiedDateTime, path: base + "/" + it.name }));
-    files.sort((a, b) => (b.mtime || "").localeCompare(a.mtime || ""));   // neuester Stand zuerst
-    store.set(key, files);
-  } catch (e) {
-    if (e instanceof AuthError) throw e;
-    files = store.get(key);
-    if (!files) throw e;
-    offline = true;
-  }
+  const { j: bz, offline, t } = await data.json(`${proj.slug}/bauzeit.json`);
+  const heute = (() => { const d = new Date(), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; })();
   shell({ title: proj.name, back: "#/", tabs }, `
-    ${offline ? `<div class="note warn">Offline: gespeicherte Liste, der Plan lässt sich nicht laden.</div>` : ""}
-    ${files.map((f, i) => `<button class="card plan" data-i="${i}">
-      <span class="pi">PDF</span><span><div class="pn">${esc(f.name.replace(/\.pdf$/i, ""))}</div>
-      <div class="pm">${f.mtime ? new Date(f.mtime).toLocaleDateString("de-DE") : ""} · ${nf(f.size / 1048576, 1, 1)} MB</div></span></button>`).join("") ||
-      `<div class="center">Kein Bauzeitenplan im Ordner gefunden.</div>`}`);
-  $("main").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (b) openPlan(files[+b.dataset.i]); });
+    ${offline ? `<div class="note warn">Offline: Stand vom ${new Date(t).toLocaleString("de-DE")}.</div>` : ""}
+    <p class="meta">Quelle: ${esc(bz.quelle)}${bz.planstand ? `, Planstand ${esc(bz.planstand)}` : ""}.
+      Zeigt die geplante <b style="color:var(--text)">Bauzeit</b> je Gewerk – nicht den Abrechnungsstand; beides kann zeitversetzt sein
+      (z.&nbsp;B. weil erst nach Ausführung abgerechnet wird).</p>
+    <div class="gantt-card">${ganttHtml(bz, heute)}</div>
+    ${proj.bauzeit_pdf ? `<button class="card plan" id="bz-pdf"><span class="pi">PDF</span><span><div class="pn">Original-Bauzeitenplan öffnen</div>
+      <div class="pm">${esc(bz.quelle)} · alle ${bz.vorgaenge_gesamt || ""} Vorgänge</div></span></button>` : ""}
+    <p class="meta">Datenstand vom ${esc(bz.erzeugt)}</p>`);
+  const b = $("#bz-pdf");
+  if (b) b.onclick = () => openPlan({ name: bz.quelle, path: `${CFG.projekteRoot}/${proj.ordner}/${proj.bauzeit_pdf}` });
+  // Schmaler Bildschirm: so weit wischen, dass die Heute-Linie zu sehen ist (die Namen erreicht man per Zurückwischen)
+  const card = $(".gantt-scroll"), today = $(".gantt-today");
+  if (card && today) {
+    const x = today.getBoundingClientRect().left - card.getBoundingClientRect().left;
+    if (x > card.clientWidth - 40) card.scrollLeft = x - card.clientWidth * 0.7;
+  }
+}
+function ganttHtml(bz, heute) {
+  const d0 = new Date(bz.projektStart), d1 = new Date(bz.projektEnde), dHeute = new Date(heute), total = d1 - d0;
+  const pct = (s) => Math.max(0, Math.min(100, ((new Date(s) - d0) / total) * 100));
+  const rowH = 26, rows = bz.gewerke, plotH = rows.length * rowH + 6;
+  const ticks = [];
+  for (let y = d0.getUTCFullYear(), m = d0.getUTCMonth() + (d0.getUTCDate() > 1 ? 1 : 0); ; m++) {
+    const iso = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+    if (new Date(iso) > d1) break;
+    if (pct(iso) < 93) ticks.push({ iso, label: new Date(iso).toLocaleDateString("de-DE", { month: "long", timeZone: "UTC" }) });   // Monatsname ganz am rechten Rand hätte keinen Platz
+  }
+  const tag = (s) => new Date(s).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+  const bars = rows.map((v, i) => {
+    const left = pct(v.start), width = Math.max(pct(v.end) - pct(v.start), 0.4);
+    const status = new Date(v.end) < dHeute ? "done" : new Date(v.start) > dHeute ? "future" : "";
+    const lbl = v.start === v.end ? tag(v.start) : `${tag(v.start)}–${tag(v.end)}`;
+    return `<div class="gantt-bar ${status}" style="top:${i * rowH + 6}px; left:${left}%; width:${width}%" title="${esc(v.name)}: ${tag(v.start)} – ${tag(v.end)}"></div>
+      ${left + width > 82   // Balken reicht bis an den rechten Rand: Datum links vom Balken
+        ? `<div class="gantt-date" style="top:${i * rowH + 5}px; right:${100 - left + 1}%">${lbl}</div>`
+        : `<div class="gantt-date" style="top:${i * rowH + 5}px; left:${left + width + 1}%">${lbl}</div>`}`;
+  }).join("");
+  // Namensspalte steht fest, nur die Zeitachse ist (auf schmalen Bildschirmen) seitlich wischbar
+  return `<div class="gantt-wrap">
+    <div class="gantt-labels"><div style="position:relative; height:${plotH}px">
+      ${rows.map((v, i) => `<div class="gantt-label" style="top:${i * rowH + 4}px"><span class="code">${esc(v.code)}</span>${esc(v.name)}</div>`).join("")}
+    </div></div>
+    <div class="gantt-scroll"><div class="gantt-inner">
+      <div class="gantt-months">${ticks.map((k) => `<span style="left:${pct(k.iso)}%">${k.label}</span>`).join("")}</div>
+      <div class="gantt-plot" style="height:${plotH}px">
+        ${ticks.map((k) => `<div class="gantt-grid-line" style="left:${pct(k.iso)}%"></div>`).join("")}
+        ${(bz.ferien || []).map((f) => `<div class="gantt-ferien" style="left:${pct(f.start)}%; width:${pct(f.end) - pct(f.start)}%" title="${esc(f.name)}"></div>`).join("")}
+        ${bars}
+        <div class="gantt-today" style="left:${pct(heute)}%; height:${plotH}px"></div>
+        <div class="gantt-today-label" style="left:${pct(heute)}%; transform:translateX(${pct(heute) > 80 ? "-100%" : pct(heute) < 15 ? "0" : "-50%"})">Heute · ${dHeute.toLocaleDateString("de-DE")}</div>
+      </div>
+    </div></div>
+    </div>
+    <div class="gantt-legend">
+      <span><span class="sw" style="background:var(--accent)"></span>läuft / bereits abgeschlossen</span>
+      <span><span class="sw" style="background:transparent; border:1.5px dashed var(--accent)"></span>noch nicht begonnen</span>
+      <span><span class="sw" style="background:var(--warn-soft); opacity:.8"></span>Schulferien</span>
+      <span><span class="sw" style="background:var(--warn)"></span>heute</span>
+    </div>`;
 }
 
 /* ---------- Nachträge ---------- */

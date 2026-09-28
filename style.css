@@ -79,6 +79,34 @@ details[open] .g-title .arrow { transform: rotate(90deg); }
 .pos { cursor: pointer; }
 mark { background: #ffe58a; color: #22271e; border-radius: 3px; }
 
+/* Bauzeitenplan (wie im BGS-Dashboard) */
+.gantt-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px 14px; margin-bottom: 12px; }
+.gantt-wrap { display: flex; }
+.gantt-labels { flex: none; width: 190px; padding-top: 40px; }
+.gantt-scroll { flex: 1; min-width: 0; overflow-x: auto; }
+.gantt-inner { min-width: 480px; padding-top: 20px; padding-right: 4px; }
+.gantt-months { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; position: relative; height: 16px; }
+.gantt-months span { position: absolute; transform: translateX(-1px); white-space: nowrap; }
+.gantt-plot { position: relative; }
+.gantt-label { position: absolute; left: 0; width: 182px; font-size: 12.5px; padding-right: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gantt-label .code { color: var(--muted); font-family: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace; font-size: 11.5px; margin-right: 5px; }
+.gantt-grid-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); }
+.gantt-ferien { position: absolute; top: 0; bottom: 0; background: var(--warn-soft); opacity: .55; }
+.gantt-today { position: absolute; top: -2px; width: 2px; background: var(--warn); z-index: 3; }
+.gantt-today-label { position: absolute; top: -38px; transform: translateX(-50%); font-size: 11px; font-weight: 700; color: var(--warn); white-space: nowrap; font-family: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace; }
+.gantt-bar { position: absolute; height: 14px; border-radius: 4px; background: var(--accent); min-width: 3px; opacity: .85; }
+.gantt-bar.done { opacity: 1; }
+.gantt-bar.future { background: transparent; border: 1.5px dashed var(--accent); opacity: .7; }
+.gantt-date { position: absolute; font-size: 10.5px; color: var(--muted); white-space: nowrap; font-family: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace; line-height: 14px; }
+.gantt-legend { display: flex; gap: 16px; margin-top: 10px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
+.gantt-legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+@media (max-width: 600px) {
+  .gantt-card { padding: 12px 10px; }
+  .gantt-labels { width: 130px; }
+  .gantt-label { width: 126px; font-size: 11.5px; }
+  .gantt-inner { min-width: 480px; }
+}
+
 /* Pläne */
 .plan { display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit; width: 100%; text-align: left; padding: 12px 14px; }
 .plan:active { background: var(--accent-soft); }
