@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bautagebuch</title>
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="bautagebuch.css?v=2">
+</head>
+<body>
+<div class="app loading" id="appRoot">
+
+  <div class="projbar">
+    <a class="btn" href="./">&lsaquo; Baustellen-App</a>
+    <label class="projbar-l" for="projSel">Projekt</label>
+    <select class="btn type-select" id="projSel"></select>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn" id="stammdatenBtn">Stammdaten</button>
+    <select class="btn type-select" id="newSheetType" title="Art des neuen Blatts">
+      <option value="tagesbericht">Tagesbericht</option>
+      <option value="telefonnotiz">Telefonnotiz</option>
+      <option value="videobesprechung">Videobesprechung</option>
+      <option value="email">E-Mail-Abstimmung</option>
+    </select>
+    <button class="btn primary" id="addDayBtn">+ Neues Blatt</button>
+    <button class="btn primary" id="gesamtBtn" title="Alle Blätter als ein PDF im Projektordner ablegen">Bautagebuch gesamt (PDF)</button>
+    <button class="btn" id="printAllBtn">Alle drucken</button>
+    <button class="btn" id="exportBtn" title="Kopie mit allen Fotos als eine Datei herunterladen">Kopie herunterladen</button>
+    <button class="btn" id="importBtn" title="Export aus dem alten Bautagebuch-Tool übernehmen">Aus Datei übernehmen</button>
+    <input type="file" id="importFile" accept="application/json" style="display:none">
+    <span class="save-note" id="saveNote">&nbsp;</span>
+  </div>
+  <div class="toolbar-note" id="toolbarNote">&nbsp;</div>
+  <div class="konflikt" id="konfliktBox" hidden></div>
+
+  <div class="filter-row" id="filterRow">
+    <span class="filter-label">Anzeige:</span>
+    <button type="button" class="filter-chip active" data-filter="all">Alle</button>
+    <button type="button" class="filter-chip" data-filter="tagesbericht">Tagesbericht</button>
+    <button type="button" class="filter-chip" data-filter="telefonnotiz">Telefonnotiz</button>
+    <button type="button" class="filter-chip" data-filter="videobesprechung">Videobesprechung</button>
+    <button type="button" class="filter-chip" data-filter="email">E-Mail-Abstimmung</button>
+  </div>
+
+  <div class="day-nav" id="dayNav"></div>
+
+  <div class="project-head">
+    <div class="row"><b>Bauvorhaben:</b> <span id="bauvorhabenDisplay" class="ph-value"></span></div>
+    <div class="row"><b>Im Auftrag von:</b> <span id="auftraggeberDisplay" class="ph-value"></span></div>
+  </div>
+
+  <div id="daysContainer"></div>
+
+  <footer class="note"><span id="storeHint"></span><br>Speichert automatisch. Vor der ersten &Auml;nderung eines Tages wird der bisherige Stand in &bdquo;_Sicherung&ldquo; abgelegt; OneDrive h&auml;lt zus&auml;tzlich &auml;ltere Versionen vor.</footer>
+
+  <div class="modal-overlay" id="stammdatenOverlay">
+    <div class="modal-panel">
+      <div class="modal-head"><h2>Stammdaten</h2><button type="button" class="modal-close" id="stammdatenClose">&times;</button></div>
+      <div class="modal-body">
+        <p class="modal-hint">Gilt projektweit und wird als Vorschlag f&uuml;r neue Bl&auml;tter &uuml;bernommen &ndash; einzelne Bl&auml;tter lassen sich trotzdem individuell anpassen.</p>
+        <label class="modal-field">Bauvorhaben<input type="text" id="sdBauvorhaben" placeholder="z. B. Freianlagen Albsiedlung Karlsruhe"></label>
+        <label class="modal-field">Im Auftrag von<input type="text" id="sdAuftraggeber" placeholder="z. B. B&uuml;ro Hink Landschaftsarchitektur GmbH"></label>
+        <label class="modal-field">Verfasser (Rolle)<input type="text" id="sdVerfasserRolle" placeholder="M. Eng. Christian Kulle, freier Landschaftsarchitekt"></label>
+        <label class="modal-field">Ort/Art (Standard f&uuml;r neue Tage)<input type="text" id="sdOrtArt" placeholder="z. B. Baustelle, ..."></label>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn primary" id="stammdatenDone">Fertig</button></div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js?v=11"></script>
+<script src="lib/msal-browser.min.js"></script>
+<script src="bautagebuch.js?v=2"></script>
+</body>
+</html>

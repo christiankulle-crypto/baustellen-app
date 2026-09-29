@@ -168,10 +168,11 @@ function viewHome() {
     `<div class="center">Keine Projekte eingetragen.</div>`);
 }
 const tabsFor = (proj, on) => (proj.lose && proj.lose.length ? `<a href="#/p/${proj.slug}/lv" class="${on === "lv" ? "on" : ""}">LV</a>` : "") +
-  (proj.bauzeit ? `<a href="#/p/${proj.slug}/bauzeit" class="${on === "bz" ? "on" : ""}">Bauzeit</a>` : "") +
   (proj.nachtraege ? `<a href="#/p/${proj.slug}/nachtraege" class="${on === "na" ? "on" : ""}">Nachträge</a>` : "") +
+  (proj.bauzeit ? `<a href="#/p/${proj.slug}/bauzeit" class="${on === "bz" ? "on" : ""}">Bauzeit</a>` : "") +
   (proj.ap ? `<a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>` : "") +
-  (proj.fotos ? `<a href="#/p/${proj.slug}/fotos" class="${on === "fo" ? "on" : ""}">Fotos</a>` : "");
+  (proj.fotos ? `<a href="#/p/${proj.slug}/fotos" class="${on === "fo" ? "on" : ""}">Fotos</a>` : "") +
+  (proj.bautagebuch ? `<a href="bautagebuch.html${DEMO ? "?demo" : ""}#${proj.slug}">Bautagebuch</a>` : "");   // eigene Seite (PC), gleiche Anmeldung
 
 /* ---------- Bauzeitenplan (Balkendiagramm wie im BGS-Dashboard, Daten automatisch aus dem PDF) ---------- */
 async function viewBauzeit(proj) {
