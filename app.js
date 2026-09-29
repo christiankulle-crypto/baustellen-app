@@ -163,7 +163,7 @@ function loginScreen(msg) {
 
 /* ---------- Startbildschirm ---------- */
 function viewHome() {
-  shell({ title: "Meine Projekte" }, projects.map((p) => `<a class="card proj" href="#/p/${p.slug}/${p.lose && p.lose.length ? "lv" : p.fotos ? "fotos" : "lv"}">
+  shell({ title: "Meine Projekte" }, projects.map((p) => `<a class="card proj" href="#/p/${p.slug}/${p.lose && p.lose.length ? "lv" : p.ap ? "plaene" : p.fotos ? "fotos" : "lv"}">
     <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.ort || "")}${p.lose && p.lose.length > 1 ? ` · ${p.lose.length} Lose` : ""}</div></a>`).join("") ||
     `<div class="center">Keine Projekte eingetragen.</div>`);
 }
@@ -599,13 +599,22 @@ async function viewPlaene(proj) {
   // Ältere Stände erkennen: gleicher Name ohne _JJJJMMTT, neuestes Datum gewinnt
   // Zwei Namensmuster: "21-085-A-007-Pflanzplan_20260922.pdf" (Datum hinten) und
   // "260909_B002c_Albsiedlung Lageplan BA1.pdf" (Datum vorn, Planindex-Buchstabe hinter der Plannummer)
-  const VORN = /^(\d{6})_([A-Z]+\d+)[a-z]?_(.+)\.pdf$/i;
-  const stem = (n) => { const m = n.match(VORN); return m ? `${m[2]}_${m[3]}`.toLowerCase() : n.replace(/\.pdf$/i, "").replace(/[_ -]?\d{8}$/, ""); };
-  const dateOf = (n) => { const m = n.match(VORN); return m ? "20" + m[1] : (n.match(/(\d{8})\.pdf$/i) || [])[1] || ""; };
+  // drittes Muster (Büro Hörner): "2026-09-25 Detail Nr. 5.2.3, Schnitt C-C'.pdf" (Datum vorn mit Bindestrichen)
+  const VORN = /^(\d{6})_([A-Z]+\d+)[a-z]?_(.+)\.pdf$/i, ISO = /^(\d{4})-(\d{2})-(\d{2})\s+(.+)\.pdf$/i;
+  const glatt = (s) => s.toLowerCase().replace(/[\s,]+/g, " ").trim();
+  const stem = (n) => {
+    const m = n.match(VORN), i = n.match(ISO);
+    return m ? `${m[2]}_${m[3]}`.toLowerCase() : i ? glatt(i[4]) : n.replace(/\.pdf$/i, "").replace(/[_ -]?\d{8}$/, "");
+  };
+  const dateOf = (n) => {
+    const m = n.match(VORN), i = n.match(ISO);
+    return m ? "20" + m[1] : i ? i[1] + i[2] + i[3] : (n.match(/(\d{8})\.pdf$/i) || [])[1] || "";
+  };
   const newest = {};
   for (const f of files) { const k = stem(f.name); if (!newest[k] || dateOf(f.name) > dateOf(newest[k])) newest[k] = f.name; }
   for (const f of files) f.old = dateOf(f.name) !== "" && newest[stem(f.name)] !== f.name;
-  files.sort((a, b) => a.name.localeCompare(b.name, "de", { numeric: true }));
+  // nach Plan sortieren (ohne Datum), innerhalb desselben Plans der neueste Stand oben
+  files.sort((a, b) => stem(a.name).localeCompare(stem(b.name), "de", { numeric: true }) || dateOf(b.name).localeCompare(dateOf(a.name)) || a.name.localeCompare(b.name, "de", { numeric: true }));
 
   shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "pl") }, `
     ${offline ? `<div class="note warn">Offline: gespeicherte Planliste, Pläne lassen sich nicht laden.</div>` : ""}
