@@ -1,10 +1,11 @@
 "use strict";
-/* Baustellen-App: LV-Stand + Pläne aus OneDrive (Microsoft Graph). Reine Lese-App. */
+/* Baustellen-App: LV-Stand + Pläne aus OneDrive (Microsoft Graph). Liest nur; schreibt einzig neue Fotos
+   in die Fotos-Ordner (immer mit conflictBehavior "fail", überschreibt oder löscht also nie etwas). */
 const CFG = window.APP_CONFIG;
 const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
 const DEMO = new URLSearchParams(location.search).has("demo") || (!CFG.clientId && LOCAL);
 const GRAPH = "https://graph.microsoft.com/v1.0/me/drive";
-const SCOPES = ["Files.Read"];
+const SCOPES = ["Files.ReadWrite"];
 const $ = (s, r = document) => r.querySelector(s);
 const app = $("#app");
 
@@ -20,6 +21,7 @@ const store = {
 };
 class AuthError extends Error {}
 class NotFound extends Error {}
+class Conflict extends Error {}   // 409: Datei/Ordner gibt es schon
 
 /* ---------- Anmeldung (MSAL, Redirect) ---------- */
 let msalApp = null, account = null;
@@ -46,9 +48,10 @@ async function token() {
 /* ---------- Datenzugriff (Graph bzw. Demo) ---------- */
 async function graph(url, opt = {}) {
   const t = await token();
-  const r = await fetch(url, { ...opt, headers: { Authorization: "Bearer " + t } });
+  const r = await fetch(url, { ...opt, headers: { ...opt.headers, Authorization: "Bearer " + t } });
   if (r.status === 401) throw new AuthError("401");
   if (r.status === 404) throw new NotFound(url);
+  if (r.status === 409) throw new Conflict(url);
   if (!r.ok) throw new Error("Graph " + r.status);
   return r;
 }
@@ -88,6 +91,33 @@ const data = {
       return await (await fetch(meta["@microsoft.graph.downloadUrl"])).arrayBuffer();
     }
   },
+  async mkdir(parent, name) { // Ordner anlegen; gibt es ihn schon, ist das auch recht
+    if (DEMO) return;
+    try {
+      await graph(`${GRAPH}/root:/${enc(parent)}:/children`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }) });
+    } catch (e) { if (!(e instanceof Conflict)) throw e; }
+  },
+  async upload(path, file, onProgress) { // Upload-Session (Fotos sind oft > 4 MB); vorhandene Datei -> Conflict
+    if (DEMO) { for (let i = 1; i <= 5; i++) { await new Promise((r) => setTimeout(r, 120)); onProgress(i / 5); } return; }
+    const s = await (await graph(`${GRAPH}/root:/${enc(path)}:/createUploadSession`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "fail" } }) })).json();
+    const CHUNK = 10 * 320 * 1024;
+    for (let start = 0; start < file.size; start += CHUNK) {
+      const end = Math.min(start + CHUNK, file.size);
+      let r;
+      for (let versuch = 1; ; versuch++) {   // Funkloch: jedes Teilstück bis zu 3-mal
+        try {
+          r = await fetch(s.uploadUrl, { method: "PUT", headers: { "Content-Range": `bytes ${start}-${end - 1}/${file.size}` }, body: file.slice(start, end) });
+          if (r.ok || r.status < 500 || versuch >= 3) break;
+        } catch (e) { if (versuch >= 3) throw e; }
+        await new Promise((res) => setTimeout(res, 1500 * versuch));
+      }
+      if (r.status === 409) throw new Conflict(path);
+      if (!r.ok) throw new Error("Upload " + r.status);
+      onProgress(end / file.size);
+    }
+  },
 };
 
 /* ---------- Seitenrahmen ---------- */
@@ -114,7 +144,7 @@ async function render() {
     if (parts[0] === "p") {
       const proj = projects.find((p) => p.slug === parts[1]);
       if (!proj) return (location.hash = "#/");
-      return parts[2] === "plaene" ? viewPlaene(proj) : parts[2] === "nachtraege" ? viewNachtraege(proj) : parts[2] === "bauzeit" ? viewBauzeit(proj) : viewLV(proj);
+      return parts[2] === "plaene" ? viewPlaene(proj) : parts[2] === "fotos" ? viewFotos(proj) : parts[2] === "nachtraege" ? viewNachtraege(proj) : parts[2] === "bauzeit" ? viewBauzeit(proj) : viewLV(proj);
     }
     viewHome();
   } catch (e) { fehler(e); }
@@ -133,14 +163,15 @@ function loginScreen(msg) {
 
 /* ---------- Startbildschirm ---------- */
 function viewHome() {
-  shell({ title: "Meine Projekte" }, projects.map((p) => `<a class="card proj" href="#/p/${p.slug}/lv">
+  shell({ title: "Meine Projekte" }, projects.map((p) => `<a class="card proj" href="#/p/${p.slug}/${p.lose && p.lose.length ? "lv" : p.fotos ? "fotos" : "lv"}">
     <div class="name">${esc(p.name)}</div><div class="sub">${esc(p.ort || "")}${p.lose && p.lose.length > 1 ? ` · ${p.lose.length} Lose` : ""}</div></a>`).join("") ||
     `<div class="center">Keine Projekte eingetragen.</div>`);
 }
-const tabsFor = (proj, on) => `<a href="#/p/${proj.slug}/lv" class="${on === "lv" ? "on" : ""}">LV</a>` +
+const tabsFor = (proj, on) => (proj.lose && proj.lose.length ? `<a href="#/p/${proj.slug}/lv" class="${on === "lv" ? "on" : ""}">LV</a>` : "") +
   (proj.bauzeit ? `<a href="#/p/${proj.slug}/bauzeit" class="${on === "bz" ? "on" : ""}">Bauzeit</a>` : "") +
   (proj.nachtraege ? `<a href="#/p/${proj.slug}/nachtraege" class="${on === "na" ? "on" : ""}">Nachträge</a>` : "") +
-  `<a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>`;
+  (proj.ap ? `<a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>` : "") +
+  (proj.fotos ? `<a href="#/p/${proj.slug}/fotos" class="${on === "fo" ? "on" : ""}">Fotos</a>` : "");
 
 /* ---------- Bauzeitenplan (Balkendiagramm wie im BGS-Dashboard, Daten automatisch aus dem PDF) ---------- */
 async function viewBauzeit(proj) {
@@ -208,6 +239,179 @@ function ganttHtml(bz, heute) {
       <span><span class="sw" style="background:var(--warn-soft); opacity:.8"></span>Schulferien</span>
       <span><span class="sw" style="background:var(--warn)"></span>heute</span>
     </div>`;
+}
+
+/* ---------- Fotos hochladen (Auswahl -> Vorschau -> Tagesordner JJMMTT im Fotos-Ordner) ---------- */
+const FS = { slug: null, items: [], folders: null, choice: {}, suffix: {}, busy: false, msg: "", redraw: () => {} };
+const p2 = (n) => String(n).padStart(2, "0");
+const dayKey = (d) => `${p2(d.getFullYear() % 100)}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
+async function aufnahmeDatum(file) {
+  // EXIF-Datum ("JJJJ:MM:TT hh:mm:ss") aus dem Dateianfang, bei JPEG und HEIC gleich. Das früheste gewinnt,
+  // denn DateTime (Bearbeitung) kann später sein als DateTimeOriginal (Aufnahme).
+  try {
+    const txt = new TextDecoder("latin1").decode(await file.slice(0, 512 * 1024).arrayBuffer());
+    const all = [...txt.matchAll(/((?:19|20)\d\d):([01]\d):([0-3]\d) ([0-2]\d):([0-5]\d):([0-5]\d)/g)].map((m) => m[0]).sort();
+    if (all.length) { const m = all[0].match(/\d+/g).map(Number); return { d: new Date(m[0], m[1] - 1, m[2], m[3], m[4], m[5]), exif: true }; }
+  } catch { /* dann Dateidatum */ }
+  return { d: new Date(file.lastModified || Date.now()), exif: false };
+}
+function fotoNamen() { // JJJJMMTT_hhmmss.ext, gleiche Sekunde -> _2, _3 …
+  FS.items.sort((a, b) => a.d - b.d || a.file.name.localeCompare(b.file.name));
+  const used = {};
+  for (const it of FS.items) {
+    const d = it.d;
+    let ext = ((it.file.name.match(/\.(\w+)$/) || [])[1] || (/heic/i.test(it.file.type) ? "heic" : "jpg")).toLowerCase();
+    if (ext === "jpeg") ext = "jpg";
+    const base = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+    const n = (used[base] = (used[base] || 0) + 1);
+    it.name = base + (n > 1 ? "_" + n : "") + "." + ext;
+    it.key = dayKey(d);
+  }
+}
+function fotosReset() { FS.items.forEach((it) => URL.revokeObjectURL(it.url)); Object.assign(FS, { items: [], choice: {}, suffix: {}, msg: "" }); }
+const zusatz = (k) => (FS.suffix[k] || "").replace(/[\\/:*?"<>|#%]/g, "").trim().replace(/^_+/, "");
+const zielOrdner = (k) => FS.choice[k] || k + (zusatz(k) ? "_" + zusatz(k) : "");
+
+async function viewFotos(proj) {
+  if (FS.slug !== proj.slug && !FS.busy) { fotosReset(); FS.slug = proj.slug; FS.folders = null; }
+  const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.fotos}`;
+  shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "fo") }, `
+    <label class="btn fo-pick"><input type="file" id="fo-in" accept="image/*" multiple hidden>＋ Fotos auswählen</label>
+    <div id="fo-body"></div>`);
+  const zaehlen = () => {
+    document.querySelectorAll(".fo-cnt").forEach((s) => {
+      const its = FS.items.filter((it) => it.key === s.dataset.k);
+      s.textContent = `${its.filter((it) => it.sel).length} von ${its.length} ausgewählt → ${zielOrdner(s.dataset.k)}`;
+    });
+  };
+  const draw = () => {
+    const el = $("#fo-body");
+    if (!el) return;
+    if (!FS.items.length) {
+      el.innerHTML = `<p class="meta" style="margin-top:14px">Fotos aus der Mediathek wählen. Danach siehst du eine Vorschau und kannst einzelne Fotos abwählen.
+        Die App legt im Ordner <b>${esc(proj.fotos)}</b> je Aufnahmetag einen Ordner <b>JJMMTT</b> an bzw. nutzt den vorhandenen.</p>`;
+      return;
+    }
+    const groups = {};
+    FS.items.forEach((it, i) => (groups[it.key] = groups[it.key] || []).push(i));
+    const nSel = FS.items.filter((it) => it.sel && !["ok", "da"].includes(it.st)).length;
+    const nErr = FS.items.filter((it) => it.sel && it.st === "err").length;
+    el.innerHTML = Object.keys(groups).sort().map((k) => {
+      const idx = groups[k], d = FS.items[idx[0]].d;
+      const vorh = (FS.folders || []).filter((f) => f.startsWith(k)).sort((a, b) => (a === k ? -1 : b === k ? 1 : a.localeCompare(b)));
+      if (!(k in FS.choice) && FS.folders) FS.choice[k] = vorh[0] || "";
+      const neu = !FS.choice[k];
+      const unsicher = idx.some((i) => !FS.items[i].exif);
+      return `<section class="fo-grp">
+        <div class="fo-h"><b>${d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}</b>
+          <span class="fo-cnt" data-k="${k}"></span></div>
+        ${unsicher ? `<div class="note warn">Bei einigen Fotos fehlt das Aufnahmedatum, dort gilt das Dateidatum. Bitte den Tag prüfen.</div>` : ""}
+        <div class="fo-dest"><span>Ordner</span>
+          <select data-k="${k}" ${FS.busy ? "disabled" : ""}>${vorh.map((f) => `<option value="${esc(f)}" ${FS.choice[k] === f ? "selected" : ""}>${esc(f)} (vorhanden)</option>`).join("")}
+            <option value="" ${neu ? "selected" : ""}>Neuer Ordner ${k}${vorh.length ? " …" : ""}</option></select>
+          ${neu ? `<input type="text" class="fo-suf" data-k="${k}" placeholder="Zusatz (optional), z. B. Abbruch" value="${esc(FS.suffix[k] || "")}" ${FS.busy ? "disabled" : ""}>` : ""}
+        </div>
+        <div class="fo-grid">${idx.map((i) => { const it = FS.items[i]; return `<button class="fo-it${it.sel ? "" : " off"} st-${it.st || "neu"}" data-i="${i}" aria-label="${esc(it.name)}">
+          <img src="${it.url}" alt="" loading="lazy"><span class="fo-chk">✓</span>
+          <span class="fo-st">${{ ok: "✓ hochgeladen", da: "schon vorhanden", err: "Fehler" }[it.st] || ""}</span>
+          <span class="fo-bar"><i style="width:${Math.round((it.p || 0) * 100)}%"></i></span></button>`; }).join("")}</div>
+      </section>`;
+    }).join("") + `
+      ${FS.msg ? `<div class="note ${nErr ? "warn" : ""}">${FS.msg}</div>` : ""}
+      <div class="fo-foot">
+        <button class="btn" id="fo-go" ${nSel && !FS.busy ? "" : "disabled"}>${FS.busy ? "Wird hochgeladen …" : !nSel && FS.items.some((it) => it.st === "ok") ? "✓ Fertig" : nErr ? `Erneut versuchen (${nSel})` : `${nSel} Foto${nSel === 1 ? "" : "s"} hochladen`}</button>
+        <button class="btn sec" id="fo-clear" ${FS.busy ? "disabled" : ""}>${FS.items.some((it) => it.st) ? "Neue Auswahl" : "Auswahl leeren"}</button>
+      </div>
+      <p class="meta">Die App während des Hochladens geöffnet lassen. Fotos, die im Zielordner schon liegen, werden übersprungen.</p>`;
+    zaehlen();
+  };
+  FS.redraw = draw;
+  draw();
+
+  $("#fo-in").onchange = async (e) => {
+    const files = [...e.target.files];
+    e.target.value = "";
+    const seen = new Set(FS.items.map((it) => it.file.name + "|" + it.file.size));
+    for (const f of files) {
+      if (seen.has(f.name + "|" + f.size)) continue;
+      const { d, exif } = await aufnahmeDatum(f);
+      FS.items.push({ file: f, url: URL.createObjectURL(f), sel: true, d, exif, st: "", p: 0 });
+    }
+    fotoNamen();
+    FS.msg = "";
+    draw();
+  };
+  $("#fo-body").addEventListener("click", (e) => {
+    const b = e.target.closest(".fo-it");
+    if (b) {
+      const it = FS.items[+b.dataset.i];
+      if (FS.busy || ["ok", "da"].includes(it.st)) return;
+      it.sel = !it.sel;
+      return draw();
+    }
+    if (e.target.id === "fo-clear") { fotosReset(); draw(); }
+    if (e.target.id === "fo-go") fotosHochladen(base).catch((err) => { if (err instanceof AuthError) return fehler(err); FS.msg = esc(err.message || err); FS.redraw(); });
+  });
+  $("#fo-body").addEventListener("change", (e) => { if (e.target.matches("select[data-k]")) { FS.choice[e.target.dataset.k] = e.target.value; draw(); } });
+  $("#fo-body").addEventListener("input", (e) => { if (e.target.matches(".fo-suf")) { FS.suffix[e.target.dataset.k] = e.target.value; zaehlen(); } });
+
+  if (!FS.folders) {   // vorhandene Tagesordner einmal lesen (für den Vorschlag)
+    try { FS.folders = (await data.list(base)).filter((it) => it.folder).map((it) => it.name); }
+    catch (e) { if (e instanceof AuthError) throw e; FS.folders = []; }
+    if (FS.slug === proj.slug) draw();
+  }
+}
+
+async function fotosHochladen(base) {
+  FS.busy = true; FS.msg = "";
+  if (!FS.folders) FS.folders = [];
+  let lock = null;
+  try { lock = await navigator.wakeLock?.request("screen"); } catch { /* nicht unterstützt */ }
+  const warn = (e) => { e.preventDefault(); e.returnValue = ""; };
+  window.addEventListener("beforeunload", warn);
+  const setEl = (i) => { // nur die eine Kachel auffrischen, kein Neuzeichnen während des Uploads
+    const b = document.querySelector(`.fo-it[data-i="${i}"]`), it = FS.items[i];
+    if (!b) return;
+    b.className = `fo-it${it.sel ? "" : " off"} st-${it.st || "neu"}`;
+    b.querySelector(".fo-bar i").style.width = Math.round((it.p || 0) * 100) + "%";
+    b.querySelector(".fo-st").textContent = { ok: "✓ hochgeladen", da: "schon vorhanden", err: "Fehler" }[it.st] || "";
+  };
+  FS.redraw();
+  const stat = { ok: 0, da: 0, err: 0 }, ziele = new Set();
+  try {
+    for (const k of [...new Set(FS.items.map((it) => it.key))].sort()) {
+      const todo = FS.items.map((it, i) => i).filter((i) => FS.items[i].key === k && FS.items[i].sel && !["ok", "da"].includes(FS.items[i].st));
+      if (!todo.length) continue;
+      const ordner = zielOrdner(k), pfad = base + "/" + ordner;
+      if (!FS.folders.includes(ordner)) { await data.mkdir(base, ordner); FS.folders.push(ordner); }
+      FS.choice[k] = ordner;   // ab jetzt fest: ein zweiter Versuch landet im selben Ordner
+      let vorhanden = new Set();
+      try { vorhanden = new Set((await data.list(pfad)).map((it) => it.name.toLowerCase())); }
+      catch (e) { if (e instanceof AuthError) throw e; }
+      for (const i of todo) {
+        const it = FS.items[i];
+        if (vorhanden.has(it.name.toLowerCase())) { it.st = "da"; it.p = 1; stat.da++; setEl(i); continue; }
+        it.st = "run"; it.p = 0; setEl(i);
+        try {
+          await data.upload(pfad + "/" + it.name, it.file, (p) => { it.p = p; setEl(i); });
+          it.st = "ok"; stat.ok++; ziele.add(ordner);
+        } catch (e) {
+          if (e instanceof AuthError) throw e;
+          if (e instanceof Conflict) { it.st = "da"; it.p = 1; stat.da++; }
+          else { it.st = "err"; it.p = 0; stat.err++; console.warn(it.name, e); }
+        }
+        setEl(i);
+      }
+    }
+    FS.msg = [stat.ok ? `✓ ${stat.ok} Foto${stat.ok === 1 ? "" : "s"} hochgeladen nach ${[...ziele].map(esc).join(", ")}` : "",
+      stat.da ? `${stat.da} schon vorhanden (übersprungen)` : "",
+      stat.err ? `${stat.err} fehlgeschlagen – bitte „Erneut versuchen“` : ""].filter(Boolean).join(" · ");
+  } finally {
+    FS.busy = false;
+    window.removeEventListener("beforeunload", warn);
+    try { await lock?.release(); } catch { /* egal */ }
+    FS.redraw();
+  }
 }
 
 /* ---------- Nachträge ---------- */
