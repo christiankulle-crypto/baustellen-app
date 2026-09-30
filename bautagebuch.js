@@ -122,15 +122,15 @@
           return r.text().then(function(t){ return { text: t, etag: tag }; });
         });
       }
-      return graph(GRAPH + "/root:/" + enc(path) + "?$select=eTag,@microsoft.graph.downloadUrl").then(function(r){ return r.json(); }, function(e){
+      // erst die Metadaten (eTag), dann den Inhalt über /content – kein $select, sonst fehlt die Download-URL
+      return graph(GRAPH + "/root:/" + enc(path)).then(function(r){ return r.json(); }, function(e){
         if(e.status === 404) return null;
         throw e;
       }).then(function(meta){
         if(!meta) return null;
-        return fetch(meta["@microsoft.graph.downloadUrl"], { cache: "no-store" }).then(function(r){
-          if(!r.ok) throw HttpError(r.status);
-          return r.text();
-        }).then(function(t){ return { text: t, etag: meta.eTag }; });
+        return graph(GRAPH + "/root:/" + enc(path) + ":/content", { cache: "no-store" })
+          .then(function(r){ return r.text(); })
+          .then(function(t){ return { text: t, etag: meta.eTag }; });
       });
     },
     // ifMatch = eTag des zuletzt gelesenen Stands; null = Datei darf es noch nicht geben. -> neuer eTag
