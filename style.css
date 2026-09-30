@@ -114,6 +114,9 @@ mark { background: #ffe58a; color: #22271e; border-radius: 3px; }
 .plan .pn { font-weight: 600; overflow-wrap: anywhere; }
 .plan .pm { font-size: 13px; color: var(--muted); }
 .plan.old { opacity: .6; }
+.pl-h { font-size: 15px; margin: 18px 2px 8px; }
+.pl-h:first-child { margin-top: 0; }
+.pl-h span { font-size: 13px; font-weight: 400; color: var(--muted); }
 
 /* Fotos hochladen */
 .btn.fo-pick { display: block; text-align: center; margin-top: 4px; cursor: pointer; }

@@ -467,6 +467,8 @@ async function viewLV(proj) {
   const rest = lv.summen.soll_netto - lv.summen.ist_netto;
   const stand = lv.rechnung
     ? `${lv.rechnung.ar_nr}. Abschlagsrechnung vom ${lv.rechnung.rechnungsdatum}, geprüft (${esc(lv.rechnung.datei)})`
+    : lv.ar_ohne_auswertung
+    ? `${lv.ar_ohne_auswertung}. Abschlagsrechnung geprüft, die Positionen werden für diese Firma noch nicht ausgelesen`
     : "Noch keine geprüfte Abschlagsrechnung";
   const ocr = lv.rechnung && lv.rechnung.ocr;
   const ocrNote = !ocr ? "" : ocr.summe_stimmt
@@ -475,6 +477,7 @@ async function viewLV(proj) {
   const chips =[["alle", "Alle"], ["arbeit", "In Arbeit"], ["offen", "Offen"], ["fertig", "Fertig"], ["ueber", "Überschritten"], ["gekuerzt", "Gekürzt"]];
   const body = `
     ${lv.los_name && proj.lose.length > 1 ? `<div class="chips">${proj.lose.map((l) => `<button class="chip ${l.id === losId ? "on" : ""}" data-los="${l.id}">${esc(l.name)}</button>`).join("")}</div>` : ""}
+    ${lv.vertrag ? `<p class="meta">${esc(lv.vertrag)}</p>` : ""}
     ${offline ? `<div class="note warn">Offline: Stand vom ${new Date(t).toLocaleString("de-DE")}.</div>` : ""}
     ${lv.neuere_ar_ungeprueft ? `<div class="note warn">Die ${lv.neuere_ar_ungeprueft}. Abschlagsrechnung liegt vor, ist aber noch nicht geprüft.</div>` : ""}
     <div class="kpis">
@@ -621,12 +624,17 @@ async function viewPlaene(proj) {
     ${offline ? `<div class="note warn">Offline: gespeicherte Planliste, Pläne lassen sich nicht laden.</div>` : ""}
     <div class="search"><input type="search" id="pq" placeholder="Pläne suchen" value="${esc(plState.q)}" autocomplete="off"></div>
     <div id="pllist" style="margin-top:10px"></div>`);
+  // Eigene Gruppen (ap_gruppen): diese Unterordner stehen mit Überschrift oben, alles Übrige darunter
+  const gruppen = (proj.ap_gruppen || []).filter((g) => files.some((f) => f.sub === g));
+  const card = (f) => `<button class="card plan ${f.old ? "old" : ""}" data-i="${files.indexOf(f)}">
+      <span class="pi">PDF</span><span><div class="pn">${esc(f.name.replace(/\.pdf$/i, ""))}</div>
+      <div class="pm">${f.mtime ? new Date(f.mtime).toLocaleDateString("de-DE") : ""} · ${nf(f.size / 1048576, 1, 1)} MB${f.sub && !gruppen.includes(f.sub) ? " · " + esc(f.sub) : ""}${f.old ? " · älterer Stand" : ""}${inkSet.has(f.path) ? ' · <b style="color:var(--accent)">✎ Skizze</b>' : ""}</div></span></button>`;
   const draw = () => {
     const q = plState.q.trim().toLowerCase();
     const shown = files.filter((f) => !q || (f.name + " " + f.sub).toLowerCase().includes(q));
-    $("#pllist").innerHTML = shown.map((f) => `<button class="card plan ${f.old ? "old" : ""}" data-i="${files.indexOf(f)}">
-      <span class="pi">PDF</span><span><div class="pn">${esc(f.name.replace(/\.pdf$/i, ""))}</div>
-      <div class="pm">${f.mtime ? new Date(f.mtime).toLocaleDateString("de-DE") : ""} · ${nf(f.size / 1048576, 1, 1)} MB${f.sub ? " · " + esc(f.sub) : ""}${f.old ? " · älterer Stand" : ""}${inkSet.has(f.path) ? ' · <b style="color:var(--accent)">✎ Skizze</b>' : ""}</div></span></button>`).join("") || `<div class="center">Keine Pläne gefunden.</div>`;
+    if (!gruppen.length) return ($("#pllist").innerHTML = shown.map(card).join("") || `<div class="center">Keine Pläne gefunden.</div>`);
+    const teile = [...gruppen.map((g) => [g, shown.filter((f) => f.sub === g)]), ["Weitere Pläne", shown.filter((f) => !gruppen.includes(f.sub))]];
+    $("#pllist").innerHTML = teile.filter(([, l]) => l.length).map(([t, l]) => `<h3 class="pl-h">${esc(t)} <span>${l.filter((f) => !f.old).length} aktuell</span></h3>${l.map(card).join("")}`).join("") || `<div class="center">Keine Pläne gefunden.</div>`;
   };
   draw();
   inkRefresh = () => Promise.resolve(ink("keys")).then((k) => { inkSet.clear(); (k || []).forEach((x) => inkSet.add(x)); if ($("#pllist")) draw(); });
