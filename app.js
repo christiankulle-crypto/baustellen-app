@@ -96,7 +96,7 @@ const data = {
     if (DEMO) return (await this.list(path)).filter((it) => !it.folder).map((it) => {
       const src = "/demo-plaene/f/" + encodeURIComponent(it.name) + "?path=" + encodeURIComponent(path);
       return { ...it, thumb: src, gross: src };
-    });
+    }).sort((a, b) => a.name.localeCompare(b.name, "de", { numeric: true }));
     let url = `${GRAPH}/root:/${enc(path)}:/children?$select=id,name,size,file,lastModifiedDateTime&$expand=thumbnails&$top=200`;
     const out = [];
     while (url) {
@@ -108,7 +108,7 @@ const data = {
       }
       url = j["@odata.nextLink"];
     }
-    return out;
+    return out.sort((a, b) => a.name.localeCompare(b.name, "de", { numeric: true }));   // chronologisch: älteste oben (Namen sind Zeitstempel bzw. IMG-Nummern)
   },
   async fotoJpeg(id, kante) { // verkleinertes JPEG über OneDrive (auch aus HEIC); null, wenn nicht möglich
     if (DEMO) return null;
@@ -462,7 +462,7 @@ async function fotoArchiv(proj, base) {
   if (FA.ordner === null) {
     try {
       FA.ordner = (await data.list(base)).filter((it) => it.folder).map((it) => ({ name: it.name, anzahl: (it.folder && it.folder.childCount) || 0 }))
-        .sort((a, b) => b.name.localeCompare(a.name, "de", { numeric: true }));
+        .sort((a, b) => a.name.localeCompare(b.name, "de", { numeric: true }));   // Tagesordner chronologisch: ältester oben, neuester unten
     } catch (e) { if (e instanceof AuthError) return fehler(e); FA.ordner = []; }
     draw();
     FA.offen.forEach((o) => { if (!FA.fotos[o]) ladeOrdner(o); });
