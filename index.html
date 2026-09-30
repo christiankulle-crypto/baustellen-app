@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
 <div id="app"></div>
@@ -24,11 +24,11 @@
     <button id="v-prev" aria-label="Vorherige Seite">‹</button>
     <span id="v-page" class="v-page"></span>
     <button id="v-next" aria-label="Nächste Seite">›</button>
-    <button id="v-fit" aria-label="Einpassen">⤢</button>
-    <button id="v-ext" aria-label="In Safari öffnen">↗</button>
+    <button id="v-fit" aria-label="Ganzen Plan einpassen">⤢</button>
+    <button id="v-ext" aria-label="Original-PDF im Browser öffnen">↗</button>
   </div>
   <div class="v-tools" id="v-tools">
-    <button id="t-draw" aria-label="Mit dem Finger zeichnen (der Stift zeichnet immer)">✎</button>
+    <button id="t-draw" aria-label="Mit dem Finger zeichnen (der Stift zeichnet immer)"><svg class="ic" viewBox="0 0 24 24"><path d="M17 3l4 4L8 20H4v-4z"/><path d="m14 6 4 4"/></svg></button>
     <button class="col on" data-c="#d62828" style="--c:#d62828" aria-label="Rot"></button>
     <button class="col" data-c="#1d4ed8" style="--c:#1d4ed8" aria-label="Blau"></button>
     <button class="col" data-c="#111111" style="--c:#111111" aria-label="Schwarz"></button>
@@ -36,16 +36,18 @@
     <button class="wd" data-w="2" aria-label="Dünn"><i style="height:2px"></i></button>
     <button class="wd on" data-w="4" aria-label="Mittel"><i style="height:4px"></i></button>
     <button class="wd" data-w="8" aria-label="Dick"><i style="height:7px"></i></button>
-    <button id="t-erase" aria-label="Radierer">⌫</button>
+    <button id="t-erase" aria-label="Radierer: Skizze oder Messung antippen, um sie zu löschen"><svg class="ic" viewBox="0 0 24 24"><path d="M7 21h13"/><path d="M5.5 16.5 15 7l4 4-8.5 8.5H7.5z"/><path d="m10 12 4 4"/></svg></button>
     <span class="v-sep"></span>
-    <button id="t-mline" aria-label="Strecke messen">📏</button>
-    <button id="t-marea" aria-label="Fläche messen">📐</button>
-    <button id="t-scale" aria-label="Maßstab einstellen">⚙</button>
+    <button id="t-mline" aria-label="Strecke messen: Punkte antippen, dann Fertig"><svg class="ic" viewBox="0 0 24 24"><path d="M3 17 17 3l4 4L7 21z"/><path d="m7 13 2 2m1-5 2 2m1-5 2 2"/></svg></button>
+    <button id="t-marea" aria-label="Fläche messen: Eckpunkte antippen, dann Fertig"><svg class="ic" viewBox="0 0 24 24"><path d="M4 8l7-5 9 6-3 11H6z" fill="currentColor" fill-opacity=".15"/><circle cx="4" cy="8" r="1.4"/><circle cx="11" cy="3" r="1.4"/><circle cx="20" cy="9" r="1.4"/><circle cx="17" cy="20" r="1.4"/><circle cx="6" cy="20" r="1.4"/></svg></button>
+    <button id="t-scale" class="t-txt" aria-label="Maßstab des Plans einstellen oder kalibrieren">1:?</button>
     <span class="v-sep"></span>
-    <button id="t-undo" aria-label="Rückgängig">↶</button>
-    <button id="t-eye" aria-label="Skizze ein- oder ausblenden">◉</button>
-    <button id="t-clear" aria-label="Alle Skizzen löschen">🗑</button>
-    <button id="t-share" aria-label="Kommentierte Fassung teilen">⤴</button>
+    <button id="t-undo" aria-label="Rückgängig: letzte Skizze oder Messung zurücknehmen"><svg class="ic" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+    <button id="t-eye" aria-label="Skizzen und Messungen ein- oder ausblenden"><svg class="ic" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="ic-aus" d="M3 3l18 18"/></svg></button>
+    <button id="t-clear" aria-label="Alle Skizzen und Messungen auf diesem Plan löschen"><svg class="ic" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5m4-5v5"/></svg></button>
+    <span class="v-sep"></span>
+    <button id="t-shot" aria-label="Ausschnitt als Bild teilen: genau das, was gerade zu sehen ist, als JPEG"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3m8 0h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3.5"/></svg></button>
+    <button id="t-share" aria-label="Ganzen Plan teilen (PDF, mit Skizzen)"><svg class="ic" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="m7.5 7.5 4.5-4.5 4.5 4.5"/><path d="M8 11H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-2"/></svg></button>
   </div>
   <div id="v-wrap">
     <div id="v-stage"><canvas id="v-canvas"></canvas></div><canvas id="v-hi"></canvas><canvas id="v-ink"></canvas>
@@ -71,10 +73,10 @@
   <div id="v-msg" class="v-msg"></div>
 </div>
 
-<script src="config.js?v=13"></script>
+<script src="config.js?v=14"></script>
 <script src="lib/msal-browser.min.js"></script>
 <script src="lib/pdf.min.js"></script>
-<script src="app.js?v=13"></script>
-<script src="ink.js?v=13"></script>
+<script src="app.js?v=14"></script>
+<script src="ink.js?v=14"></script>
 </body>
 </html>

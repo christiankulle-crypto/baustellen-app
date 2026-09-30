@@ -147,6 +147,52 @@ mark { background: #ffe58a; color: #22271e; border-radius: 3px; }
 .center { text-align: center; padding: 60px 24px; color: var(--muted); }
 .center h2 { color: var(--text); margin: 0 0 8px; }
 .btn { display: inline-block; margin-top: 14px; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 700; }
+.btn .ic { width: 18px; height: 18px; vertical-align: -3px; margin-right: 4px; }
+.btn.sec { background: var(--accent-soft); color: var(--accent); }
+
+/* Fotoarchiv */
+.fa-ord .g-sub { align-items: center; }
+.fa-alle { font-size: 13px; font-weight: 600; color: var(--accent); padding: 4px 8px; border-radius: 8px; background: var(--accent-soft); }
+.fa-grid { padding: 0 10px 12px; }
+.fa-it { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--bar); cursor: zoom-in; }
+.fa-it img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fa-leer { display: grid; place-items: center; height: 100%; font-size: 10px; color: var(--muted); padding: 4px; text-align: center; overflow-wrap: anywhere; }
+.fa-chk { position: absolute; top: 0; right: 0; width: 44px; height: 44px; display: grid; place-items: center; font-size: 0; cursor: pointer; }
+.fa-chk::before { content: "✓"; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700;
+  color: transparent; background: rgba(0,0,0,.25); box-shadow: 0 0 0 2px #fff; }
+.fa-it.sel .fa-chk::before { background: var(--accent); color: #fff; }
+.fa-it.sel { box-shadow: inset 0 0 0 3px var(--accent); }
+.fa-it.sel img { opacity: .85; }
+.fa-bar { position: sticky; bottom: 0; z-index: 6; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px calc(var(--sab) + 10px); margin-top: 12px; box-shadow: 0 -4px 16px rgba(0,0,0,.08); }
+.fa-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.fa-row + .fa-row { margin-top: 8px; }
+.fa-row .btn { margin-top: 0; padding: 10px 16px; }
+.fa-klein { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.fa-msg { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+#fa-lb { position: fixed; inset: 0; z-index: 200; background: #111; display: flex; flex-direction: column; color: #fff; }
+#fa-lb[hidden] { display: none; }
+.lb-top { display: flex; align-items: center; gap: 6px; padding: calc(var(--sat) + 8px) 10px 8px; }
+.lb-t { flex: 1; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lb-b { width: 42px; height: 42px; border-radius: 10px; font-size: 20px; display: grid; place-items: center; color: #fff; }
+.lb-b:active, .lb-b:hover { background: rgba(255,255,255,.12); }
+.lb-sel { font-size: 16px; font-weight: 700; box-shadow: inset 0 0 0 2px rgba(255,255,255,.6); }
+.lb-sel.on { background: var(--accent); box-shadow: none; }
+.lb-bild { flex: 1; display: grid; place-items: center; overflow: hidden; touch-action: pan-y; }
+.lb-bild img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lb-pf { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 64px; font-size: 34px; color: #fff; background: rgba(0,0,0,.35); border-radius: 10px; }
+.lb-pf.l { left: 8px; } .lb-pf.r { right: 8px; }
+.lb-msg { position: absolute; left: 0; right: 0; bottom: calc(var(--sab) + 20px); text-align: center; }
+.lb-msg span { display: inline-block; background: rgba(0,0,0,.7); padding: 8px 14px; border-radius: 10px; font-size: 14px; }
+.lb-msg .btn { margin-top: 0; }
+
+/* Protokolle */
+.pr-row { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 12px; padding: 12px 14px; }
+.pr-d { font-weight: 700; }
+.pr-t { overflow-wrap: anywhere; }
+.pr-k { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.pr-b { margin-top: 0; padding: 7px 14px; text-decoration: none; font-size: 14px; }
+.pr-b.off { opacity: .4; pointer-events: none; }
+.pr-web { font-size: 12px; color: var(--muted); }
 .spin { display: inline-block; width: 22px; height: 22px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: sp 0.8s linear infinite; }
 @keyframes sp { to { transform: rotate(360deg); } }
 
@@ -162,6 +208,7 @@ mark { background: #ffe58a; color: #22271e; border-radius: 3px; }
 #v-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .v-tools { display: flex; align-items: center; gap: 4px; overflow-x: auto; padding: 4px 8px; background: var(--bg); border-bottom: 1px solid var(--border); scrollbar-width: none; }
 .v-tools::-webkit-scrollbar { display: none; }
+button, .v-tools button { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .v-tools button { flex: none; width: 38px; height: 38px; border-radius: 10px; font-size: 19px; display: grid; place-items: center; }
 .v-tools button:disabled { opacity: .35; }
 .v-tools button.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
@@ -169,6 +216,15 @@ mark { background: #ffe58a; color: #22271e; border-radius: 3px; }
 .v-tools .col.on { background: var(--c); outline-color: var(--text); box-shadow: none; }
 .v-tools .wd i { display: block; width: 20px; background: var(--text); border-radius: 3px; }
 .v-sep { flex: none; width: 1px; height: 24px; background: var(--border); margin: 0 2px; align-self: center; }
+.ic { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.ic circle { fill: currentColor; stroke: none; }
+.ic path[fill] { stroke: currentColor; }
+#t-eye .ic circle { fill: none; stroke: currentColor; }
+#t-eye .ic-aus { display: none; }
+#t-eye.aus .ic-aus { display: inline; }
+.v-tools button.t-txt { width: auto; min-width: 44px; padding: 0 7px; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1.5px solid var(--border); }
+/* Erklär-Blase: am PC beim Draufzeigen, am Handy/iPad bei langem Drücken */
+.tip { position: fixed; z-index: 300; max-width: min(280px, calc(100vw - 16px)); background: #222; color: #fff; font-size: 13px; line-height: 1.35; padding: 7px 10px; border-radius: 8px; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
 .v-panel { position: absolute; top: 8px; left: 8px; right: 8px; max-width: 340px; margin: 0 auto; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; z-index: 20; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
 .v-panel-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .v-panel-row button { width: 30px; height: 30px; border-radius: 8px; }

@@ -7,6 +7,7 @@ const DEMO = new URLSearchParams(location.search).has("demo") || (!CFG.clientId 
 const GRAPH = "https://graph.microsoft.com/v1.0/me/drive";
 const SCOPES = ["Files.ReadWrite"];
 const $ = (s, r = document) => r.querySelector(s);
+const PC = matchMedia("(hover: hover) and (pointer: fine)").matches;   // Maus/Trackpad: Desktop-Funktionen (z. B. Protokolle)
 const app = $("#app");
 
 /* ---------- Hilfen ---------- */
@@ -39,7 +40,7 @@ async function initAuth() {
   if (account) msalApp.setActiveAccount(account);
   return !!account;
 }
-const login = () => msalApp.loginRedirect({ scopes: SCOPES, prompt: "select_account" });
+const login = () => msalApp.loginRedirect(CFG.loginHint ? { scopes: SCOPES, loginHint: CFG.loginHint } : { scopes: SCOPES, prompt: "select_account" });
 async function token() {
   try { return (await msalApp.acquireTokenSilent({ scopes: SCOPES, account })).accessToken; }
   catch (e) { throw new AuthError(e.message); }
@@ -73,7 +74,7 @@ const data = {
   },
   async list(path) { // Ordnerinhalt (nur Metadaten)
     if (DEMO) return await (await fetch("/demo-plaene/index.json?path=" + encodeURIComponent(path))).json();
-    let url = `${GRAPH}/root:/${enc(path)}:/children?$select=name,size,lastModifiedDateTime,file,folder&$top=200`;
+    let url = `${GRAPH}/root:/${enc(path)}:/children?$select=id,name,size,lastModifiedDateTime,file,folder,webUrl,webDavUrl&$top=200`;
     const out = [];
     while (url) {
       const j = await (await graph(url)).json();
@@ -90,6 +91,34 @@ const data = {
       const meta = await (await graph(`${GRAPH}/root:/${enc(path)}`)).json(); // Fallback: vorab signierte Download-URL
       return await (await fetch(meta["@microsoft.graph.downloadUrl"])).arrayBuffer();
     }
+  },
+  async fotos(path) { // Bilder eines Ordners mit Vorschaubildern (OneDrive rechnet auch HEIC in JPEG um)
+    if (DEMO) return (await this.list(path)).filter((it) => !it.folder).map((it) => {
+      const src = "/demo-plaene/f/" + encodeURIComponent(it.name) + "?path=" + encodeURIComponent(path);
+      return { ...it, thumb: src, gross: src };
+    });
+    let url = `${GRAPH}/root:/${enc(path)}:/children?$select=id,name,size,file,lastModifiedDateTime&$expand=thumbnails&$top=200`;
+    const out = [];
+    while (url) {
+      const j = await (await graph(url)).json();
+      for (const it of j.value) {
+        if (!it.file || !/^image\//.test(it.file.mimeType || "") && !/\.(jpe?g|png|heic|heif)$/i.test(it.name)) continue;
+        const t = (it.thumbnails || [])[0] || {};
+        out.push({ ...it, thumb: (t.medium || t.small || {}).url, gross: (t.large || t.medium || {}).url });
+      }
+      url = j["@odata.nextLink"];
+    }
+    return out;
+  },
+  async fotoJpeg(id, kante) { // verkleinertes JPEG über OneDrive (auch aus HEIC); null, wenn nicht möglich
+    if (DEMO) return null;
+    try {
+      const j = await (await graph(`${GRAPH}/items/${id}/thumbnails?select=c${kante}x${kante}`)).json();
+      const u = j.value && j.value[0] && j.value[0][`c${kante}x${kante}`] && j.value[0][`c${kante}x${kante}`].url;
+      if (!u) return null;
+      const r = await fetch(u);
+      return r.ok ? await r.blob() : null;
+    } catch (e) { if (e instanceof AuthError) throw e; return null; }
   },
   async mkdir(parent, name) { // Ordner anlegen; gibt es ihn schon, ist das auch recht
     if (DEMO) return;
@@ -144,7 +173,7 @@ async function render() {
     if (parts[0] === "p") {
       const proj = projects.find((p) => p.slug === parts[1]);
       if (!proj) return (location.hash = "#/");
-      return parts[2] === "plaene" ? viewPlaene(proj) : parts[2] === "fotos" ? viewFotos(proj) : parts[2] === "nachtraege" ? viewNachtraege(proj) : parts[2] === "bauzeit" ? viewBauzeit(proj) : viewLV(proj);
+      return parts[2] === "plaene" ? viewPlaene(proj) : parts[2] === "fotos" ? viewFotos(proj) : parts[2] === "protokolle" ? viewProtokolle(proj) : parts[2] === "nachtraege" ? viewNachtraege(proj) : parts[2] === "bauzeit" ? viewBauzeit(proj) : viewLV(proj);
     }
     viewHome();
   } catch (e) { fehler(e); }
@@ -172,6 +201,7 @@ const tabsFor = (proj, on) => (proj.lose && proj.lose.length ? `<a href="#/p/${p
   (proj.bauzeit ? `<a href="#/p/${proj.slug}/bauzeit" class="${on === "bz" ? "on" : ""}">Bauzeit</a>` : "") +
   (proj.ap ? `<a href="#/p/${proj.slug}/plaene" class="${on === "pl" ? "on" : ""}">Pläne</a>` : "") +
   (proj.fotos ? `<a href="#/p/${proj.slug}/fotos" class="${on === "fo" ? "on" : ""}">Fotos</a>` : "") +
+  (PC && proj.protokolle ? `<a href="#/p/${proj.slug}/protokolle" class="${on === "pr" ? "on" : ""}">Protokolle</a>` : "") +
   (proj.bautagebuch ? `<a href="bautagebuch.html${DEMO ? "?demo" : ""}#${proj.slug}">Bautagebuch</a>` : "");   // eigene Seite (PC), gleiche Anmeldung
 
 /* ---------- Bauzeitenplan (Balkendiagramm wie im BGS-Dashboard, Daten automatisch aus dem PDF) ---------- */
@@ -278,7 +308,9 @@ async function viewFotos(proj) {
   const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.fotos}`;
   shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "fo") }, `
     <label class="btn fo-pick"><input type="file" id="fo-in" accept="image/*" multiple hidden>＋ Fotos auswählen</label>
-    <div id="fo-body"></div>`);
+    <div id="fo-body"></div>
+    <div id="fa"></div>`);
+  fotoArchiv(proj, base);
   const zaehlen = () => {
     document.querySelectorAll(".fo-cnt").forEach((s) => {
       const its = FS.items.filter((it) => it.key === s.dataset.k);
@@ -363,6 +395,181 @@ async function viewFotos(proj) {
   }
 }
 
+/* ---------- Fotoarchiv: vorhandene Tagesordner ansehen, mehrere auswählen, teilen ---------- */
+const TEILEN_SVG = `<svg class="ic" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="m7.5 7.5 4.5-4.5 4.5 4.5"/><path d="M8 11H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-2"/></svg>`;
+const FA = { slug: null, ordner: null, fotos: {}, offen: new Set(), sel: new Map(), klein: true, busy: false, bereit: null, msg: "" };
+const ordnerTitel = (n) => { const m = n.match(/^(\d{2})(\d{2})(\d{2})_?(.*)$/); return m ? `${m[3]}.${m[2]}.20${m[1]}${m[4] ? " · " + m[4].replace(/_/g, " ") : ""}` : n; };
+async function fotoArchiv(proj, base) {
+  if (FA.slug !== proj.slug) Object.assign(FA, { slug: proj.slug, ordner: null, fotos: {}, offen: new Set(), sel: new Map(), bereit: null, msg: "" });
+  const el = () => $("#fa");
+  const kachel = (o, f, i) => `<div class="fa-it${FA.sel.has(o + "/" + f.name) ? " sel" : ""}" data-o="${esc(o)}" data-i="${i}">
+      ${f.thumb ? `<img src="${esc(f.thumb)}" alt="" loading="lazy">` : `<span class="fa-leer">${esc(f.name)}</span>`}
+      <button class="fa-chk" aria-label="Foto auswählen">✓</button></div>`;
+  const draw = () => {
+    if (!el()) return;
+    const n = FA.sel.size;
+    el().innerHTML = `<div class="h-small" style="margin-top:26px">Fotoarchiv</div>
+      ${FA.ordner === null ? loading() : !FA.ordner.length ? `<p class="meta">Noch keine Tagesordner.</p>` : FA.ordner.map((o) => {
+        const fs = FA.fotos[o.name], alleSel = fs && fs.length && fs.every((f) => FA.sel.has(o.name + "/" + f.name));
+        return `<details class="grp fa-ord" data-o="${esc(o.name)}" ${FA.offen.has(o.name) ? "open" : ""}><summary>
+          <div class="g-title"><span>${esc(ordnerTitel(o.name))}</span><span class="arrow">›</span></div>
+          <div class="g-sub"><span>${o.anzahl} Datei${o.anzahl === 1 ? "" : "en"}</span>
+            ${fs && fs.length ? `<button class="fa-alle" data-o="${esc(o.name)}">${alleSel ? "Keins" : "Alle"} auswählen</button>` : ""}</div></summary>
+          ${!FA.offen.has(o.name) ? "" : !fs ? `<div style="padding:12px">${loading()}</div>` : `<div class="fo-grid fa-grid">${fs.map((f, i) => kachel(o.name, f, i)).join("") || `<p class="meta">Keine Bilder.</p>`}</div>`}
+        </details>`;
+      }).join("")}
+      ${n || FA.msg ? `<div class="fa-bar">
+        ${FA.msg ? `<div class="fa-msg">${FA.msg}</div>` : ""}
+        ${n ? `<div class="fa-row"><b>${n} ausgewählt</b>
+          <label class="fa-klein"><input type="checkbox" id="fa-klein" ${FA.klein ? "checked" : ""} ${FA.busy ? "disabled" : ""}> verkleinert (JPEG, für E-Mail)</label></div>
+        <div class="fa-row">
+          ${FA.bereit ? `<button class="btn" id="fa-jetzt">${TEILEN_SVG} Jetzt teilen (${FA.bereit.length})</button>`
+            : `<button class="btn" id="fa-teilen" ${FA.busy ? "disabled" : ""} aria-label="Ausgewählte Fotos teilen, z. B. per E-Mail">${TEILEN_SVG} ${FA.busy ? "Wird vorbereitet …" : "Teilen"}</button>`}
+          ${PC ? `<button class="btn sec" id="fa-laden" ${FA.busy ? "disabled" : ""} aria-label="Ausgewählte Fotos herunterladen">Herunterladen</button>` : ""}
+          <button class="btn sec" id="fa-weg" ${FA.busy ? "disabled" : ""}>Auswahl aufheben</button></div>` : ""}
+      </div>` : ""}`;
+  };
+  FA.redraw = draw;
+  const ladeOrdner = async (o) => {
+    try { FA.fotos[o] = await data.fotos(base + "/" + o); }
+    catch (e) { if (e instanceof AuthError) return fehler(e); FA.fotos[o] = []; FA.msg = "Ordner konnte nicht geladen werden: " + esc(e.message || e); }
+    draw();
+  };
+  draw();
+  el().addEventListener("toggle", (e) => {
+    const d = e.target.closest && e.target.closest("details.fa-ord");
+    if (!d) return;
+    const o = d.dataset.o;
+    if (d.open && !FA.offen.has(o)) { FA.offen.add(o); draw(); if (!FA.fotos[o]) ladeOrdner(o); }
+    else if (!d.open && FA.offen.has(o)) { FA.offen.delete(o); }
+  }, true);
+  el().addEventListener("click", async (e) => {
+    const chk = e.target.closest(".fa-chk"), alle = e.target.closest(".fa-alle"), it = e.target.closest(".fa-it");
+    if (alle) {
+      e.preventDefault();
+      const o = alle.dataset.o, fs = FA.fotos[o] || [], an = !fs.every((f) => FA.sel.has(o + "/" + f.name));
+      fs.forEach((f) => (an ? FA.sel.set(o + "/" + f.name, { o, f }) : FA.sel.delete(o + "/" + f.name)));
+      FA.bereit = null; FA.msg = ""; return draw();
+    }
+    if (chk && it) { fotoWaehlen(it.dataset.o, +it.dataset.i); return; }
+    if (it) return fotoGross(it.dataset.o, +it.dataset.i);
+    if (e.target.closest("#fa-weg")) { FA.sel.clear(); FA.bereit = null; FA.msg = ""; return draw(); }
+    if (e.target.closest("#fa-teilen")) return fotosVorbereiten(base, false);
+    if (e.target.closest("#fa-laden")) return fotosVorbereiten(base, true);
+    if (e.target.closest("#fa-jetzt")) return fotosTeilen();
+  });
+  el().addEventListener("change", (e) => { if (e.target.id === "fa-klein") { FA.klein = e.target.checked; FA.bereit = null; draw(); } });
+  if (FA.ordner === null) {
+    try {
+      FA.ordner = (await data.list(base)).filter((it) => it.folder).map((it) => ({ name: it.name, anzahl: (it.folder && it.folder.childCount) || 0 }))
+        .sort((a, b) => b.name.localeCompare(a.name, "de", { numeric: true }));
+    } catch (e) { if (e instanceof AuthError) return fehler(e); FA.ordner = []; }
+    draw();
+    FA.offen.forEach((o) => { if (!FA.fotos[o]) ladeOrdner(o); });
+  }
+}
+function fotoWaehlen(o, i) {
+  const f = FA.fotos[o][i], k = o + "/" + f.name;
+  FA.sel.has(k) ? FA.sel.delete(k) : FA.sel.set(k, { o, f });
+  FA.bereit = null; FA.msg = "";
+  FA.redraw();
+}
+async function verkleinern(blob, kante) {   // JPEG/PNG im Browser verkleinern; HEIC kann nicht jeder Browser -> null
+  try {
+    const bmp = await createImageBitmap(blob);
+    const s = Math.min(1, kante / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
+  } catch { return null; }
+}
+async function fotosVorbereiten(base, herunterladen) {
+  FA.busy = true; FA.bereit = null; FA.msg = "";
+  FA.redraw();
+  const liste = [...FA.sel.values()], dateien = [];
+  let original = 0;
+  try {
+    for (let n = 0; n < liste.length; n++) {
+      const { o, f } = liste[n];
+      FA.msg = `Foto ${n + 1} von ${liste.length} wird geladen …`;
+      const m = $(".fa-msg"); if (m) m.textContent = FA.msg; else FA.redraw();
+      const stamm = o + "_" + f.name.replace(/\.[^.]+$/, "");
+      let blob = FA.klein ? await data.fotoJpeg(f.id, 2048) : null;
+      if (!blob) {
+        const roh = new Blob([await data.blob(base + "/" + o + "/" + f.name, f.name)], { type: (f.file && f.file.mimeType) || "application/octet-stream" });
+        blob = FA.klein ? await verkleinern(roh, 2048) : null;
+        if (!blob) { blob = roh; if (FA.klein) original++; }
+      }
+      const jpg = blob.type === "image/jpeg" && FA.klein;
+      dateien.push(new File([blob], jpg ? stamm + ".jpg" : o + "_" + f.name, { type: blob.type || "application/octet-stream" }));
+    }
+    const mb = dateien.reduce((s, d) => s + d.size, 0) / 1048576;
+    FA.msg = `${dateien.length} Foto${dateien.length === 1 ? "" : "s"} bereit, zusammen ${nf(mb, 1, 1)} MB` + (original ? ` (${original} davon im Original, dieses Format lässt sich hier nicht verkleinern)` : "") + ".";
+    if (herunterladen) { dateien.forEach(dateiSpeichern); FA.msg = `${dateien.length} Foto${dateien.length === 1 ? "" : "s"} heruntergeladen.`; }
+    else FA.bereit = dateien;   // Teilen braucht einen frischen Tipp, daher zweiter Knopf „Jetzt teilen“
+  } catch (e) {
+    if (e instanceof AuthError) return fehler(e);
+    FA.msg = "Das hat nicht geklappt: " + esc(e.message || e);
+  } finally { FA.busy = false; FA.redraw(); }
+}
+function dateiSpeichern(file) {
+  const u = URL.createObjectURL(file), a = document.createElement("a");
+  a.href = u; a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
+}
+async function fotosTeilen(dateien = FA.bereit) {
+  if (!dateien || !dateien.length) return;
+  if (navigator.canShare && navigator.canShare({ files: dateien })) {
+    try { await navigator.share({ files: dateien }); FA.msg = "Geteilt."; FA.bereit = null; }
+    catch (e) { if (e.name !== "AbortError") FA.msg = "Teilen ging nicht: " + esc(e.message || e); }
+  } else { dateien.forEach(dateiSpeichern); FA.msg = "Dieser Browser kann keine Dateien teilen, die Fotos wurden heruntergeladen."; FA.bereit = null; }
+  FA.redraw();
+}
+/* Großansicht mit Blättern (Pfeiltasten, Wischen), Auswählen und Teilen des einzelnen Fotos */
+function fotoGross(o, i) {
+  const fs = FA.fotos[o];
+  let lb = $("#fa-lb");
+  if (!lb) { lb = document.createElement("div"); lb.id = "fa-lb"; document.body.appendChild(lb); }
+  const zeige = () => {
+    const f = fs[i], k = o + "/" + f.name;
+    lb.innerHTML = `<div class="lb-top"><button class="lb-b" id="lb-x" aria-label="Schließen">✕</button>
+        <span class="lb-t">${esc(ordnerTitel(o))} · ${i + 1}/${fs.length}</span>
+        <button class="lb-b lb-sel${FA.sel.has(k) ? " on" : ""}" id="lb-sel" aria-label="Foto auswählen (für Teilen mehrerer Fotos)">✓</button>
+        <button class="lb-b" id="lb-share" aria-label="Dieses Foto teilen">${TEILEN_SVG}</button></div>
+      <div class="lb-bild"><img src="${esc(f.gross || f.thumb || "")}" alt=""></div>
+      ${i > 0 ? `<button class="lb-pf l" id="lb-prev" aria-label="Voriges Foto">‹</button>` : ""}
+      ${i < fs.length - 1 ? `<button class="lb-pf r" id="lb-next" aria-label="Nächstes Foto">›</button>` : ""}
+      <div class="lb-msg" id="lb-msg"></div>`;
+    lb.hidden = false;
+  };
+  const zu = () => { lb.hidden = true; lb.innerHTML = ""; document.removeEventListener("keydown", taste); FA.redraw(); };
+  const geh = (d) => { if (fs[i + d]) { i += d; zeige(); } };
+  const taste = (e) => { if (e.key === "Escape") zu(); if (e.key === "ArrowLeft") geh(-1); if (e.key === "ArrowRight") geh(1); };
+  document.addEventListener("keydown", taste);
+  lb.onclick = async (e) => {
+    if (e.target.closest("#lb-x")) return zu();
+    if (e.target.closest("#lb-prev")) return geh(-1);
+    if (e.target.closest("#lb-next")) return geh(1);
+    if (e.target.closest("#lb-sel")) { const f = fs[i], k = o + "/" + f.name; FA.sel.has(k) ? FA.sel.delete(k) : FA.sel.set(k, { o, f }); FA.bereit = null; return zeige(); }
+    if (e.target.closest("#lb-share")) {
+      const f = fs[i], m = $("#lb-msg");
+      m.innerHTML = `<span>Wird vorbereitet …</span>`;
+      try {
+        let blob = await data.fotoJpeg(f.id, 2048);
+        if (!blob) { const roh = new Blob([await data.blob(`${CFG.projekteRoot}/${projects.find((p) => p.slug === FA.slug).ordner}/${projects.find((p) => p.slug === FA.slug).fotos}/${o}/${f.name}`, f.name)]); blob = (await verkleinern(roh, 2048)) || roh; }
+        const datei = new File([blob], blob.type === "image/jpeg" ? o + "_" + f.name.replace(/\.[^.]+$/, "") + ".jpg" : o + "_" + f.name, { type: blob.type || "image/jpeg" });
+        m.innerHTML = `<button class="btn" id="lb-jetzt">${TEILEN_SVG} Jetzt teilen</button>`;   // frischer Tipp für iOS
+        $("#lb-jetzt").onclick = async (ev) => { ev.stopPropagation(); m.innerHTML = ""; await fotosTeilen([datei]); };
+      } catch (err) { if (err instanceof AuthError) { zu(); return fehler(err); } m.innerHTML = `<span>Das hat nicht geklappt: ${esc(err.message || err)}</span>`; }
+    }
+  };
+  let x0 = null;   // Wischen zum Blättern
+  lb.onpointerdown = (e) => { if (e.target.closest(".lb-bild")) x0 = e.clientX; };
+  lb.onpointerup = (e) => { if (x0 !== null && Math.abs(e.clientX - x0) > 60) geh(e.clientX < x0 ? 1 : -1); x0 = null; };
+  zeige();
+}
+
 async function fotosHochladen(base) {
   FS.busy = true; FS.msg = "";
   if (!FS.folders) FS.folders = [];
@@ -413,6 +620,55 @@ async function fotosHochladen(base) {
     try { await lock?.release(); } catch { /* egal */ }
     FS.redraw();
   }
+}
+
+/* ---------- Protokolle (nur PC): je Termin Word und PDF in einer Zeile ---------- */
+function protoDatum(name, mtime) {
+  let m = name.match(/^(\d{4})-(\d{2})-(\d{2})/);                       // 2026-05-11 Protokoll …
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = name.match(/^(\d{2})0?(\d{2})(\d{2})(?=\D)/);                       // 260511_… und Tippfehler 2600803_…
+  if (m && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return `20${m[1]}-${m[2]}-${m[3]}`;
+  m = name.match(/(\d{2})\.(\d{2})\.(\d{4})/);                            // Protokoll 52  12.08.2026
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return (mtime || "").slice(0, 10);
+}
+const protoTitel = (name) => name.replace(/\.(pdf|docx?)$/i, "").replace(/^\d{4}-\d{2}-\d{2}\s*/, "").replace(/^\d{6,7}\s*[-_ ]*\s*/, "")
+  .replace(/_/g, " ").replace(/\s*\d{2}\.\d{2}\.\d{4}\s*$/, "").replace(/\s{2,}/g, " ").replace(/^[-\s]+|[-\s]+$/g, "");
+async function viewProtokolle(proj) {
+  const tabs = tabsFor(proj, "pr");
+  shell({ title: proj.name, back: "#/", tabs }, loading());
+  const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.protokolle}`;
+  const top = await data.list(base);
+  const files = top.filter((it) => !it.folder).map((it) => ({ ...it, pfad: base + "/" + it.name }));
+  const subs = top.filter((it) => it.folder && !/^(archiv|wiederherstellung|_)/i.test(it.name));
+  (await Promise.all(subs.map((s) => data.list(base + "/" + s.name).then((l) => l.map((it) => ({ ...it, pfad: base + "/" + s.name + "/" + it.name })), () => []))))
+    .forEach((l) => files.push(...l.filter((it) => !it.folder)));
+  const termine = {};
+  for (const f of files) {
+    if (!/\.(pdf|docx?)$/i.test(f.name) || /vorlage/i.test(f.name)) continue;
+    const d = protoDatum(f.name, f.lastModifiedDateTime);
+    (termine[d] = termine[d] || []).push(f);
+  }
+  const tage = Object.keys(termine).sort().reverse();
+  const knopf = (f, i, mehrere) => {   // mehrere PDFs am selben Tag (z. B. eigenes Protokoll + Protokoll des Büros): Knopf mit Namen
+    if (/\.pdf$/i.test(f.name)) return `<button class="btn sec pr-b" data-pdf="${i}" aria-label="PDF in der App öffnen: ${esc(f.name)}">${mehrere ? esc(protoTitel(f.name).split(" - ").pop() || "PDF") : "PDF"}</button>`;
+    const desk = f.webDavUrl ? "ms-word:ofe|u|" + f.webDavUrl : f.webUrl;   // Word am PC öffnen (zum Bearbeiten)
+    return `<a class="btn sec pr-b${desk ? "" : " off"}" ${desk ? `href="${esc(desk)}"` : ""} aria-label="In Word öffnen (bearbeiten): ${esc(f.name)}">Word</a>` +
+      (f.webUrl ? `<a class="pr-web" href="${esc(f.webUrl)}" target="_blank" rel="noopener" aria-label="Im Browser öffnen (Word für das Web)">im Browser</a>` : "");
+  };
+  const alle = [];
+  shell({ title: proj.name, back: "#/", tabs }, `
+    <p class="meta">Protokolle aus <b>${esc(proj.protokolle)}</b>, neueste oben. Word öffnet die Datei direkt in Word zum Bearbeiten, PDF in der App.</p>
+    ${tage.map((d) => {
+      const fs = termine[d].sort((a, b) => (/\.pdf$/i.test(b.name) ? 1 : 0) - (/\.pdf$/i.test(a.name) ? 1 : 0));
+      const titel = protoTitel((fs.find((f) => /\.pdf$/i.test(f.name)) || fs[0]).name) || "Protokoll";
+      return `<div class="card pr-row"><div class="pr-d num">${new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
+        <div class="pr-t">${esc(titel)}</div><div class="pr-k">${fs.map((f) => knopf(f, alle.push(f) - 1)).join("")}</div></div>`;
+    }).join("") || `<div class="center">Keine Protokolle im Ordner gefunden.</div>`}`);
+  $("main").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-pdf]");
+    if (b) { const f = alle[+b.dataset.pdf]; openPlan({ name: f.name, path: f.pfad }); }
+  });
 }
 
 /* ---------- Nachträge ---------- */
@@ -786,6 +1042,45 @@ window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => { if (!$("#viewer").hidden && V.doc) showPage(V.page); }, 250);
 });
+
+/* ---------- Erklär-Blasen für Symbol-Knöpfe (Text = aria-label) ----------
+   PC: Maus kurz auf dem Knopf lassen. Handy/iPad: Knopf lang drücken, dann wird er NICHT ausgelöst. */
+(function tips() {
+  let el = null, timer = null, auf = null, unterdruecken = false;
+  const ziel = (e) => (e.target.closest ? e.target.closest("button[aria-label], a[aria-label], label[aria-label]") : null);
+  const weg = () => { clearTimeout(timer); timer = null; auf = null; if (el) el.remove(); };
+  const zeige = (b) => {
+    const txt = b.getAttribute("aria-label");
+    if (!txt || !b.isConnected) return;
+    el = el || Object.assign(document.createElement("div"), { className: "tip" });
+    el.textContent = txt;
+    document.body.appendChild(el);
+    const r = b.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+    let y = r.bottom + 8;
+    if (y + h > innerHeight - 8) y = r.top - h - 8;
+    el.style.left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8) + "px";
+    el.style.top = y + "px";
+    auf = b;
+  };
+  document.addEventListener("pointerover", (e) => {
+    if (e.pointerType !== "mouse") return;
+    const b = ziel(e);
+    if (!b || b === auf) return;
+    weg();
+    timer = setTimeout(() => zeige(b), 700);
+  });
+  document.addEventListener("pointerout", (e) => { const b = ziel(e); if (b && !b.contains(e.relatedTarget)) weg(); });
+  document.addEventListener("pointerdown", (e) => {
+    weg(); unterdruecken = false;
+    if (e.pointerType === "mouse") return;
+    const b = ziel(e);
+    if (b) timer = setTimeout(() => { zeige(b); unterdruecken = true; setTimeout(weg, 2500); }, 500);
+  }, true);
+  document.addEventListener("pointerup", () => { if (!unterdruecken) clearTimeout(timer); }, true);
+  document.addEventListener("pointercancel", () => clearTimeout(timer), true);
+  document.addEventListener("click", (e) => { if (unterdruecken) { unterdruecken = false; e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener("contextmenu", (e) => { if (ziel(e)) e.preventDefault(); });
+})();
 
 /* ---------- Start ---------- */
 window.addEventListener("hashchange", () => { if (projects || DEMO || account) render(); });

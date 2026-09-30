@@ -283,7 +283,7 @@ const Ink = (() => {
     afterScaleSet("1 : " + denom);
   }
   function afterScaleSet(text) {
-    save();
+    save(); updateUi();
     document.getElementById("v-scale").hidden = true;
     vmsg("Maßstab " + text + " übernommen."); setTimeout(() => vmsg(""), 2000);
     if (S.pendingTool) { S.tool = S.pendingTool; S.pendingTool = null; updateUi(); renderBar(); }
@@ -315,7 +315,9 @@ const Ink = (() => {
     q("t-mline").classList.toggle("on", S.tool === "mline");
     q("t-marea").classList.toggle("on", S.tool === "marea");
     q("t-eye").classList.toggle("on", !S.visible);
-    q("t-eye").textContent = S.visible ? "◉" : "◌";
+    q("t-eye").classList.toggle("aus", !S.visible);   // durchgestrichenes Auge
+    const denom = S.scale ? (S.scale * 72) / 0.0254 : 0;   // Maßstab direkt auf dem Knopf
+    q("t-scale").textContent = !S.scale ? "1:?" : Math.abs(denom - Math.round(denom)) < 0.01 ? "1:" + Math.round(denom) : "kalib.";
     q("t-undo").disabled = !S.hist.length;
     q("t-clear").disabled = !S.strokes.length;
     document.querySelectorAll("#v-tools [data-c]").forEach((b) => b.classList.toggle("on", !S.erase && b.dataset.c === S.color));
@@ -338,6 +340,7 @@ const Ink = (() => {
       if (confirm(`Alle ${S.strokes.length} Skizzen/Messungen auf diesem Plan löschen? Der Plan selbst bleibt unverändert.`)) { S.strokes = []; S.hist = []; save(); redraw(); updateUi(); }
     });
     on("t-share", share);
+    on("t-shot", shareView);
     document.querySelectorAll("#v-tools [data-c]").forEach((b) => (b.onclick = () => {
       S.erase = false; S.tool = null; cancelMeasure();
       S.color = b.dataset.c; S.alpha = +(b.dataset.a || 1); S.mult = +(b.dataset.m || 1); updateUi();
@@ -415,27 +418,45 @@ const Ink = (() => {
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: file.name }); return; }
     download(file);
   }
+  /* Sichtbarer Bildausschnitt (so wie auf dem Bildschirm, mit Skizzen/Messungen) als JPEG */
+  async function baueAusschnitt() {
+    const wrap = vw(), k = Math.max(2, dprOf());
+    const w = Math.round(wrap.clientWidth * k), h = Math.round(wrap.clientHeight * k);
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    await V.pg.render({ canvasContext: ctx, viewport: V.pg.getViewport({ scale: V.fit * V.s * k, offsetX: V.tx * k, offsetY: V.ty * k }) }).promise;
+    if (S.visible) ctx.drawImage(cv(), 0, 0, w, h);   // Skizzen-Ebene hat dieselbe Bildschirmgröße
+    const jpg = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.9));
+    const d = new Date(), p = (n) => String(n).padStart(2, "0");
+    const stem = V.name.replace(/\.pdf$/i, "");
+    return new File([jpg], `${stem}_Ausschnitt_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.jpg`, { type: "image/jpeg" });
+  }
   let sharing = false;
-  async function share() {
+  async function teilen(bauen, meldung, knopf) {
     if (!V.pg || !V.bytes || sharing) return;   // Doppel-Tipp: nicht zwei Exporte gleichzeitig auf derselben Seite rendern
     sharing = true;
-    try { await shareInner(); } finally { sharing = false; }
+    try {
+      if (meldung) vmsg(meldung);
+      let file;
+      try { file = await bauen(); } catch (e) { vmsg("Das hat nicht geklappt: " + (e.message || e)); return; }
+      vmsg("");
+      try { await senden(file); }
+      catch (e) {
+        if (e && e.name === "AbortError") return;
+        // iOS verlangt manchmal einen frischen Tipp, wenn das Erstellen länger gedauert hat
+        const box = document.getElementById("v-msg");
+        box.innerHTML = `<button class="v-send">${knopf}</button>`;
+        box.querySelector("button").onclick = async () => { box.innerHTML = ""; try { await senden(file); } catch { download(file); } };
+      }
+    } finally { sharing = false; }
   }
-  async function shareInner() {
+  function share() {
     const skizze = S.strokes.some((s) => s.pg === V.page);
-    vmsg(skizze ? "Kommentierte Fassung wird erstellt …" : "");
-    let file;
-    try { file = await baueDatei(); } catch (e) { vmsg("Das hat nicht geklappt: " + (e.message || e)); return; }
-    vmsg("");
-    try { await senden(file); }
-    catch (e) {
-      if (e && e.name === "AbortError") return;
-      // iOS verlangt manchmal einen frischen Tipp, wenn das Erstellen länger gedauert hat
-      const box = document.getElementById("v-msg");
-      box.innerHTML = `<button class="v-send">${skizze ? "Kommentierte Fassung senden" : "Plan senden"}</button>`;
-      box.querySelector("button").onclick = async () => { box.innerHTML = ""; try { await senden(file); } catch { download(file); } };
-    }
+    return teilen(baueDatei, skizze ? "Kommentierte Fassung wird erstellt …" : "", skizze ? "Kommentierte Fassung senden" : "Plan senden");
   }
+  const shareView = () => teilen(baueAusschnitt, "Ausschnitt wird erstellt …", "Ausschnitt senden");
 
   init();
   return { down, move, up, redraw, open, close, keys, pageChanged };
