@@ -663,7 +663,7 @@ async function viewProtokolle(proj) {
       const fs = termine[d].sort((a, b) => (/\.pdf$/i.test(b.name) ? 1 : 0) - (/\.pdf$/i.test(a.name) ? 1 : 0));
       const titel = protoTitel((fs.find((f) => /\.pdf$/i.test(f.name)) || fs[0]).name) || "Protokoll";
       return `<div class="card pr-row"><div class="pr-d num">${new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
-        <div class="pr-t">${esc(titel)}</div><div class="pr-k">${fs.map((f) => knopf(f, alle.push(f) - 1)).join("")}</div></div>`;
+        <div class="pr-t">${esc(titel)}</div><div class="pr-k">${fs.map((f) => knopf(f, alle.push(f) - 1, fs.filter((g) => /\.pdf$/i.test(g.name)).length > 1)).join("")}</div></div>`;
     }).join("") || `<div class="center">Keine Protokolle im Ordner gefunden.</div>`}`);
   $("main").addEventListener("click", (e) => {
     const b = e.target.closest("[data-pdf]");
