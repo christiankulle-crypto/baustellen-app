@@ -1027,6 +1027,8 @@ function zoomAt(px, py, s2) {
   let last = null, lastTap = 0;
   const rel = (e) => { const r = el.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   el.addEventListener("pointerdown", (e) => {
+    // Fenster und Eingabefelder über dem Plan (Maßstab, Text): nicht einfangen, sonst erreicht der Klick die Knöpfe dort nicht
+    if (e.target.closest && e.target.closest(".v-panel, .v-txt, .v-txtbar")) return;
     if (ink("down", e, rel(e))) { el.setPointerCapture(e.pointerId); return; }   // Stift/Zeichenmodus: zeichnen statt schieben
     el.setPointerCapture(e.pointerId); ptr.set(e.pointerId, rel(e));
     last = null;

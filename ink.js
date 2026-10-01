@@ -89,9 +89,36 @@ const Ink = (() => {
     m.zeilen.forEach((z, i) => ctx.fillText(z, x + m.pad, y + m.pad + i * m.fs * 1.25 + m.fs * 0.12));
     ctx.textBaseline = "alphabetic";
   }
+  /* Formen: p = [Startpunkt, Endpunkt] (Rechteck/Kreis = gegenüberliegende Ecken des Rahmens, Pfeil = Anfang → Spitze) */
+  const FORMEN = ["rechteck", "kreis", "pfeil"];
+  function drawForm(ctx, st, X, Y, W) {
+    const [a, b] = st.p, x0 = X(a[0]), y0 = Y(a[1]), x1 = X(b[0]), y1 = Y(b[1]), lw = Math.max(0.8, st.w * W);
+    ctx.save();
+    ctx.strokeStyle = st.c; ctx.fillStyle = st.c; ctx.globalAlpha = st.a; ctx.lineWidth = lw; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.beginPath();
+    if (st.form === "rechteck") { ctx.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)); ctx.stroke(); }
+    else if (st.form === "kreis") { ctx.ellipse((x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2, 0, 0, Math.PI * 2); ctx.stroke(); }
+    else {   // Pfeil: Linie bis kurz vor die Spitze, dann gefülltes Dreieck
+      const ang = Math.atan2(y1 - y0, x1 - x0), h = Math.min(Math.max(lw * 4.5, 7), Math.hypot(x1 - x0, y1 - y0) * 0.6);
+      ctx.moveTo(x0, y0); ctx.lineTo(x1 - Math.cos(ang) * h * 0.7, y1 - Math.sin(ang) * h * 0.7); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - h * Math.cos(ang - 0.45), y1 - h * Math.sin(ang - 0.45));
+      ctx.lineTo(x1 - h * Math.cos(ang + 0.45), y1 - h * Math.sin(ang + 0.45));
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function formPunkte(st) {   // Umriss als Punktfolge (für den Radierer)
+    const [a, b] = st.p;
+    if (st.form === "pfeil") return [a, b];
+    if (st.form === "rechteck") return [a, [b[0], a[1]], b, [a[0], b[1]]];
+    const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2, rx = Math.abs(b[0] - a[0]) / 2, ry = Math.abs(b[1] - a[1]) / 2;
+    return Array.from({ length: 36 }, (_, i) => [cx + rx * Math.cos((i * Math.PI) / 18), cy + ry * Math.sin((i * Math.PI) / 18)]);
+  }
   function zeichne(ctx, st, X, Y, W, ps) {
     if (st.type === "mline" || st.type === "marea") drawMeasureShape(ctx, st, X, Y, ps);
     else if (st.type === "text") drawText(ctx, st, X, Y, W);
+    else if (st.type === "form") drawForm(ctx, st, X, Y, W);
     else strokePath(ctx, st, X, Y, W);
   }
   function redraw() {
@@ -106,7 +133,7 @@ const Ink = (() => {
       if (st.pg !== V.page || (S.edit && S.edit.st === st)) continue;   // Text in Bearbeitung zeigt nur das Eingabefeld
       zeichne(ctx, st, X, Y, W, d);
     }
-    if (S.cur) strokePath(ctx, S.cur, X, Y, W);
+    if (S.cur) zeichne(ctx, S.cur, X, Y, W, d);
     if (S.measure && S.measure.pg === V.page && S.measure.p.length) {
       drawMeasureShape(ctx, { p: S.measure.p, closed: S.tool === "marea" && S.measure.p.length > 2, label: shapeLabel(S.tool, S.measure.p) }, X, Y, d);
     }
@@ -154,8 +181,9 @@ const Ink = (() => {
     for (const st of S.strokes) {
       if (st.pg !== V.page) { keep.push(st); continue; }
       if (st.type === "text") { (textHit(st, x, y) ? S.erased : keep).push(st); continue; }
-      const P =st.p.map((q) => [V.tx + q[0] * sc, V.ty + q[1] * V.h * V.s]);
-      const segs = P.length > 1 ? P.length - (st.closed ? 0 : 1) : 0, r = 16 + ((st.w || 0.006) * sc) / 2;
+      const form = st.type === "form", closed = form ? st.form !== "pfeil" : st.closed;   // Formen: am Umriss treffen
+      const P = (form ? formPunkte(st) : st.p).map((q) => [V.tx + q[0] * sc, V.ty + q[1] * V.h * V.s]);
+      const segs = P.length > 1 ? P.length - (closed ? 0 : 1) : 0, r = 16 + ((st.w || 0.006) * sc) / 2;
       let hit = P.length === 1 ? Math.hypot(P[0][0] - x, P[0][1] - y) <= r : false;
       for (let i = 0; i < segs && !hit; i++) {
         const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
@@ -181,6 +209,13 @@ const Ink = (() => {
       return true;
     }
     if (S.edit && e.pointerType === "mouse") textFertig();   // Klick daneben (ohne Textwerkzeug): Eingabe beenden, Plan normal schieben
+    if (FORMEN.includes(S.tool)) {   // Rechteck/Kreis/Pfeil aufziehen (Finger, Stift oder Maus)
+      if (S.pid !== null) return true;
+      S.pid = e.pointerId; S.pen = e.pointerType === "pen";
+      const q = toN(x, y);
+      S.cur = { pg: V.page, type: "form", form: S.tool, c: S.color, a: S.alpha, w: (S.wpx * S.mult) / (V.w * V.s), p: [q, q.slice()] };
+      frame(); return true;
+    }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== null) return true;   // Handballen/zweiten Finger ignorieren
       S.pid = e.pointerId;
@@ -206,6 +241,15 @@ const Ink = (() => {
         if (d.moved || Math.hypot(x - d.x, y - d.y) > 4) { d.moved = true; d.st.p = [[d.p0[0][0] + (x - d.x) / (V.w * V.s), d.p0[0][1] + (y - d.y) / (V.h * V.s)]]; frame(); }
       }
       return true;
+    }
+    if (S.cur && S.cur.type === "form") {
+      if (S.pid !== e.pointerId) return false;
+      let [x, y] = rel(e);
+      if (e.shiftKey && S.cur.form !== "pfeil") {   // Umschalt: Quadrat bzw. Kreis
+        const sx = V.tx + S.cur.p[0][0] * V.w * V.s, sy = V.ty + S.cur.p[0][1] * V.h * V.s, d = Math.max(Math.abs(x - sx), Math.abs(y - sy));
+        x = sx + Math.sign(x - sx || 1) * d; y = sy + Math.sign(y - sy || 1) * d;
+      }
+      S.cur.p[1] = toN(x, y); frame(); return true;
     }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== e.pointerId) return false;
@@ -238,6 +282,13 @@ const Ink = (() => {
       else if (d && d.st) textEditor(d.st, false);
       else if (d) { const [nx, ny] = toN(d.neu[0], d.neu[1]); textEditor({ pg: V.page, type: "text", p: [[nx, ny]], t: "", c: S.color, m: S.alpha < 1, fs: (TXT_PX[S.wpx] || 16) / (V.w * V.s) }, true); }
       return true;
+    }
+    if (S.cur && S.cur.type === "form") {
+      if (S.pid !== e.pointerId) return false;
+      S.pid = null;
+      const [a, b] = S.cur.p;
+      if (Math.hypot((a[0] - b[0]) * V.w * V.s, (a[1] - b[1]) * V.h * V.s) > 6) { S.strokes.push(S.cur); S.hist.push({ t: "add", s: S.cur }); save(); }   // nur Antippen: nichts anlegen
+      S.cur = null; frame(); updateUi(); return true;
     }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== e.pointerId) return false;
@@ -439,6 +490,7 @@ const Ink = (() => {
     const q = (id) => document.getElementById(id);
     q("t-draw").classList.toggle("on", S.draw);
     q("t-text").classList.toggle("on", S.tool === "text");
+    FORMEN.forEach((f) => q("t-" + f).classList.toggle("on", S.tool === f));
     q("t-erase").classList.toggle("on", S.erase);
     q("t-mline").classList.toggle("on", S.tool === "mline");
     q("t-marea").classList.toggle("on", S.tool === "marea");
@@ -455,6 +507,11 @@ const Ink = (() => {
     const on = (id, f) => { document.getElementById(id).onclick = f; };
     on("t-draw", () => { S.draw = !S.draw; if (S.draw) { S.erase = false; S.tool = null; cancelMeasure(); } updateUi(); vmsg(S.draw ? "Zeichnen mit Finger an. Zum Verschieben und Zoomen wieder ausschalten." : ""); setTimeout(() => vmsg(""), 2500); });
     on("t-erase", () => { S.erase = !S.erase; if (S.erase) { S.draw = false; S.tool = null; cancelMeasure(); } updateUi(); });
+    FORMEN.forEach((f) => on("t-" + f, () => {
+      S.draw = false; S.erase = false; cancelMeasure(); textFertig();
+      S.tool = S.tool === f ? null : f;
+      updateUi();
+    }));
     on("t-text", () => {
       S.draw = false; S.erase = false; cancelMeasure(); textFertig();
       S.tool = S.tool === "text" ? null : "text";
@@ -479,13 +536,13 @@ const Ink = (() => {
     // Farbe/Stärke: beim Textwerkzeug bleibt es aktiv, ein gerade bearbeiteter Text übernimmt Farbe bzw. Größe
     const fuerText = () => { if (S.edit) { positionEditor(); S.edit.ta.focus(); } };
     document.querySelectorAll("#v-tools [data-c]").forEach((b) => (b.onclick = () => {
-      S.erase = false; if (S.tool !== "text") S.tool = null; cancelMeasure();
+      S.erase = false; if (S.tool !== "text" && !FORMEN.includes(S.tool)) S.tool = null; cancelMeasure();
       S.color = b.dataset.c; S.alpha = +(b.dataset.a || 1); S.mult = +(b.dataset.m || 1);
       if (S.edit) { S.edit.st.c = S.color; S.edit.st.m = S.alpha < 1; }
       updateUi(); fuerText();
     }));
     document.querySelectorAll("#v-tools [data-w]").forEach((b) => (b.onclick = () => {
-      if (S.tool !== "text") S.tool = null; cancelMeasure(); S.wpx = +b.dataset.w;
+      if (S.tool !== "text" && !FORMEN.includes(S.tool)) S.tool = null; cancelMeasure(); S.wpx = +b.dataset.w;
       if (S.edit) S.edit.st.fs = (TXT_PX[S.wpx] || 16) / (V.w * V.s);
       updateUi(); fuerText();
     }));
