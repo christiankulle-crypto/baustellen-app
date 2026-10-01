@@ -1,6 +1,6 @@
 // Service Worker: hält nur die App-Hülle (Code, Bibliotheken, Icons) vor. Projektdaten und Pläne nie.
 // Strategie: erst Netz (damit Änderungen sofort ankommen), bei Funkloch oder langsamer Verbindung der Zwischenspeicher.
-const CACHE = "baustellen-app-v10";
+const CACHE = "baustellen-app-v11";
 const SHELL = ["./", "index.html", "style.css", "app.js", "ink.js", "config.js", "manifest.webmanifest",
   "bautagebuch.html", "bautagebuch.css", "bautagebuch.js", "bautagebuch-pdf.js", "lib/pdf-lib.min.js",
   "lib/msal-browser.min.js", "lib/pdf.min.js", "lib/pdf.worker.min.js",

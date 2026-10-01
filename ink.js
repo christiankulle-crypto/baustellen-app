@@ -170,14 +170,17 @@ const Ink = (() => {
   function down(e, [x, y]) {
     if (!V.pg) return false;
     if (e.pointerType === "mouse" && e.button !== 0) return false;   // nur linke Maustaste zeichnet/misst/radiert, Mitte/Rechts bleibt zum Verschieben frei
-    if (S.tool === "text") {
+    // Am PC lässt sich ein vorhandener Text auch ohne Textwerkzeug anklicken (ändern) oder ziehen (verschieben)
+    const freiText = !S.tool && !S.draw && !S.erase && e.pointerType === "mouse" && S.visible && !S.edit ? textAt(x, y) : null;
+    if (S.tool === "text" || freiText) {
       if (S.pid !== null) return true;
       if (S.edit) { textFertig(); return true; }   // Klick daneben beendet nur die Eingabe
       S.pid = e.pointerId;
-      const st = textAt(x, y);
+      const st = freiText || textAt(x, y);
       S.txtDrag = st ? { st, x, y, p0: st.p, moved: false } : { neu: [x, y] };
       return true;
     }
+    if (S.edit && e.pointerType === "mouse") textFertig();   // Klick daneben (ohne Textwerkzeug): Eingabe beenden, Plan normal schieben
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== null) return true;   // Handballen/zweiten Finger ignorieren
       S.pid = e.pointerId;
@@ -195,7 +198,7 @@ const Ink = (() => {
     frame(); return true;
   }
   function move(e, rel) {
-    if (S.tool === "text") {
+    if (S.txtDrag) {
       if (S.pid !== e.pointerId) return false;
       const d = S.txtDrag;
       if (d && d.st) {
@@ -227,7 +230,7 @@ const Ink = (() => {
     frame(); return true;
   }
   function up(e) {
-    if (S.tool === "text") {
+    if (S.txtDrag) {
       if (S.pid !== e.pointerId) return false;
       S.pid = null;
       const d = S.txtDrag; S.txtDrag = null;
@@ -261,6 +264,7 @@ const Ink = (() => {
   /* ---- Text: Stelle anklicken, schreiben, Enter = fertig (Umschalt+Enter = neue Zeile), Esc = abbrechen.
      Vorhandenen Text mit dem Textwerkzeug anklicken = ändern (leer machen = löschen), ziehen = verschieben. ---- */
   const TXT_PX = { 2: 12, 4: 16, 8: 24 };   // Schriftgröße je Strichstärke-Knopf, in Bildschirmpixeln beim Setzen
+  const TXT_FARBEN = [["#d62828", false, "Rot"], ["#1d4ed8", false, "Blau"], ["#111111", false, "Schwarz"], ["#ffd60a", true, "Gelb hinterlegt"]];
   function textHit(st, x, y) {
     const W = V.w * V.s, m = textMass(st, W), x0 = V.tx + st.p[0][0] * W, y0 = V.ty + st.p[0][1] * V.h * V.s;
     return x >= x0 - 6 && x <= x0 + m.w + 6 && y >= y0 - 6 && y <= y0 + m.h + 6;
@@ -271,15 +275,33 @@ const Ink = (() => {
     const ta = document.createElement("textarea");
     ta.className = "v-txt"; ta.value = st.t; ta.rows = 1; ta.spellcheck = true;
     ta.setAttribute("aria-label", "Text für den Plan");
-    vw().appendChild(ta);
-    S.edit = { st, neu, ta, alt: textStand(st) };
+    // Leiste direkt am Text: Schrift kleiner/größer, Farbe, löschen, fertig
+    const bar = document.createElement("div");
+    bar.className = "v-tools v-txtbar";
+    bar.innerHTML = `<button data-fs="0.8" aria-label="Schrift kleiner" class="t-txt">A−</button><button data-fs="1.25" aria-label="Schrift größer" class="t-txt">A+</button><span class="v-sep"></span>`
+      + TXT_FARBEN.map(([c, m, l]) => `<button class="col" data-tc="${c}" data-tm="${m ? 1 : ""}" style="--c:${c}" aria-label="${l}"></button>`).join("")
+      + `<span class="v-sep"></span><button data-del aria-label="Text löschen"><svg class="ic" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5m4-5v5"/></svg></button>`
+      + `<button data-ok aria-label="Fertig (Enter)">✓</button>`;
+    vw().appendChild(ta); vw().appendChild(bar);
+    S.edit = { st, neu, ta, bar, alt: textStand(st) };
     ta.addEventListener("pointerdown", (e) => e.stopPropagation());   // im Feld klicken = Cursor setzen, nicht neuer Text
+    // Leiste: Fokus im Textfeld lassen (sonst würde es abgeschlossen) und den Plan nicht verschieben
+    ["pointerdown", "mousedown"].forEach((t) => bar.addEventListener(t, (e) => { e.preventDefault(); e.stopPropagation(); }));
+    bar.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.fs) st.fs = Math.min(0.2, Math.max(0.002, st.fs * +b.dataset.fs));
+      else if (b.dataset.tc) { st.c = b.dataset.tc; st.m = !!b.dataset.tm; S.color = st.c; S.alpha = st.m ? 0.45 : 1; S.mult = st.m ? 4 : 1; updateUi(); }
+      else if ("del" in b.dataset) { ta.value = ""; return textFertig(); }
+      else if ("ok" in b.dataset) return textFertig();
+      positionEditor(); ta.focus();
+    });
     ta.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); textFertig(); }
       else if (e.key === "Escape") { e.preventDefault(); textFertig(true); }
     });
     ta.addEventListener("input", positionEditor);
-    ta.addEventListener("blur", () => textFertig());
+    ta.addEventListener("blur", (e) => { if (!(e.relatedTarget && bar.contains(e.relatedTarget))) textFertig(); });
     frame(); positionEditor();
     setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
   }
@@ -292,13 +314,17 @@ const Ink = (() => {
       fontSize: m.fs + "px", padding: m.pad + "px", width: Math.max(m.w, m.fs * 3) + m.fs + "px", height: m.h + 4 + "px",
       color: st.m ? "#111111" : st.c, background: st.m ? "rgba(255,214,10,.75)" : "rgba(255,255,255,.95)",
     });
+    const b = e.bar, l = V.tx + st.p[0][0] * W, t = V.ty + st.p[0][1] * V.h * V.s, bh = b.offsetHeight || 46;
+    b.style.left = Math.max(4, Math.min(l, vw().clientWidth - b.offsetWidth - 4)) + "px";
+    b.style.top = (t - bh - 6 >= 4 ? t - bh - 6 : t + m.h + 10) + "px";   // über dem Text, oben am Rand darunter
+    b.querySelectorAll("[data-tc]").forEach((x) => x.classList.toggle("on", x.dataset.tc === st.c && !!x.dataset.tm === !!st.m));
   }
   function textFertig(abbrechen) {
     const e = S.edit;
     if (!e) return;
     S.edit = null;   // vor dem Entfernen, weil remove() noch ein blur auslöst
     const t = e.ta.value.replace(/\s+$/, "");
-    e.ta.remove();
+    e.ta.remove(); e.bar.remove();
     if (abbrechen) Object.assign(e.st, e.alt);
     else if (e.neu) { if (t) { e.st.t = t; S.strokes.push(e.st); S.hist.push({ t: "add", s: e.st }); save(); } }
     else if (!t) { S.strokes = S.strokes.filter((s) => s !== e.st); S.hist.push({ t: "del", list: [Object.assign(e.st, e.alt)] }); save(); }
@@ -409,7 +435,7 @@ const Ink = (() => {
 
   /* ---- Oberfläche ---- */
   function updateUi() {
-    if (S.edit && S.tool !== "text") textFertig();   // anderes Werkzeug gewählt: Eingabe abschließen
+    if (S.edit && (S.draw || S.erase || (S.tool && S.tool !== "text"))) textFertig();   // anderes Werkzeug gewählt: Eingabe abschließen
     const q = (id) => document.getElementById(id);
     q("t-draw").classList.toggle("on", S.draw);
     q("t-text").classList.toggle("on", S.tool === "text");
@@ -430,7 +456,7 @@ const Ink = (() => {
     on("t-draw", () => { S.draw = !S.draw; if (S.draw) { S.erase = false; S.tool = null; cancelMeasure(); } updateUi(); vmsg(S.draw ? "Zeichnen mit Finger an. Zum Verschieben und Zoomen wieder ausschalten." : ""); setTimeout(() => vmsg(""), 2500); });
     on("t-erase", () => { S.erase = !S.erase; if (S.erase) { S.draw = false; S.tool = null; cancelMeasure(); } updateUi(); });
     on("t-text", () => {
-      S.draw = false; S.erase = false; cancelMeasure();
+      S.draw = false; S.erase = false; cancelMeasure(); textFertig();
       S.tool = S.tool === "text" ? null : "text";
       updateUi();
       vmsg(S.tool === "text" ? "Auf den Plan klicken und schreiben. Enter = fertig, Umschalt+Enter = neue Zeile." : "");
@@ -467,7 +493,7 @@ const Ink = (() => {
 
   /* ---- Öffnen, Schließen, Liste ---- */
   async function open(key) {
-    if (S.edit) { S.edit.ta.remove(); S.edit = null; }
+    if (S.edit) { S.edit.ta.remove(); S.edit.bar.remove(); S.edit = null; }
     S.key = key; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.visible = true; S.erase = false; S.draw = false;
     S.tool = null; S.measure = null; S.calib = null; S.pendingTool = null; S.scale = null; S.dragPt = null;
     document.getElementById("v-scale").hidden = true; renderBar();

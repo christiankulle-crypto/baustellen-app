@@ -249,3 +249,5 @@ button, .v-tools button { -webkit-touch-callout: none; -webkit-user-select: none
 /* Text im Plan: Eingabefeld an der Stelle, an der der Text sitzen wird */
 .v-txt { position: absolute; z-index: 15; margin: 0; border: 1.5px dashed #0a58ca; border-radius: 2px; outline: none; resize: none; overflow: hidden;
   box-sizing: border-box; font-family: system-ui, sans-serif; font-weight: 600; line-height: 1.25; white-space: pre; touch-action: auto; }
+.v-txtbar { position: absolute; z-index: 16; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.22); overflow: visible; }
+.v-txtbar button.t-txt { min-width: 38px; font-size: 14px; }
