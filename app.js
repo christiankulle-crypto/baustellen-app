@@ -303,13 +303,32 @@ function fotosReset() { FS.items.forEach((it) => URL.revokeObjectURL(it.url)); O
 const zusatz = (k) => (FS.suffix[k] || "").replace(/[\\/:*?"<>|#%]/g, "").trim().replace(/^_+/, "");
 const zielOrdner = (k) => FS.choice[k] || k + (zusatz(k) ? "_" + zusatz(k) : "");
 
+const FO_ORTE = {};   // Projekte mit Fotos je Ort (Fotos/<Ort>/<JJMMTT>): Ortsordner, einmal gelesen
 async function viewFotos(proj) {
-  if (FS.slug !== proj.slug && !FS.busy) { fotosReset(); FS.slug = proj.slug; FS.folders = null; }
-  const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.fotos}`;
-  shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "fo") }, `
+  let base = `${CFG.projekteRoot}/${proj.ordner}/${proj.fotos}`, ortWahl = "";
+  if (proj.fotos_orte) {   // zuerst den Ort wählen; Hochladen und Archiv arbeiten dann in diesem Ortsordner
+    if (!FO_ORTE[proj.slug]) {
+      shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "fo") }, loading());
+      try { FO_ORTE[proj.slug] = (await data.list(base)).filter((it) => it.folder).map((it) => it.name).sort((a, b) => a.localeCompare(b, "de")); }
+      catch (e) { if (e instanceof AuthError) return fehler(e); FO_ORTE[proj.slug] = []; }
+    }
+    const orte = FO_ORTE[proj.slug], ort = orte.includes(store.get("fotoOrt:" + proj.slug)) ? store.get("fotoOrt:" + proj.slug) : "";
+    ortWahl = `<div class="fo-dest fo-ort"><span>Ort</span><select id="fo-ort" ${FS.busy ? "disabled" : ""}>
+      <option value="">Bitte Ort wählen …</option>${orte.map((o) => `<option ${o === ort ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
+    if (!ort) {
+      shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "fo") }, ortWahl + `<p class="meta" style="margin-top:12px">Die Fotos liegen je Ort in einem eigenen Ordner. Nach der Wahl kannst Du Fotos hochladen (Tagesordner JJMMTT im Ortsordner) und das Archiv des Orts ansehen.</p>`);
+      $("#fo-ort").onchange = (e) => { store.set("fotoOrt:" + proj.slug, e.target.value); viewFotos(proj); };
+      return;
+    }
+    base += "/" + ort;
+  }
+  const schluessel = proj.slug + "|" + base;
+  if (FS.slug !== schluessel && !FS.busy) { fotosReset(); FS.slug = schluessel; FS.folders = null; }
+  shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "fo") }, `${ortWahl}
     <label class="btn fo-pick"><input type="file" id="fo-in" accept="image/heic,image/heif,image/jpeg,image/png" multiple hidden>＋ Fotos auswählen</label>
     <div id="fo-body"></div>
     <div id="fa"></div>`);
+  if (proj.fotos_orte) $("#fo-ort").onchange = (e) => { store.set("fotoOrt:" + proj.slug, e.target.value); viewFotos(proj); };
   fotoArchiv(proj, base);
   const zaehlen = () => {
     document.querySelectorAll(".fo-cnt").forEach((s) => {
@@ -397,7 +416,7 @@ async function viewFotos(proj) {
   if (!FS.folders) {   // vorhandene Tagesordner einmal lesen (für den Vorschlag)
     try { FS.folders = (await data.list(base)).filter((it) => it.folder).map((it) => it.name); }
     catch (e) { if (e instanceof AuthError) throw e; FS.folders = []; }
-    if (FS.slug === proj.slug) draw();
+    if (FS.slug === schluessel) draw();
   }
 }
 
@@ -406,7 +425,7 @@ const TEILEN_SVG = `<svg class="ic" viewBox="0 0 24 24"><path d="M12 15V3"/><pat
 const FA = { slug: null, ordner: null, fotos: {}, offen: new Set(), sel: new Map(), klein: true, busy: false, bereit: null, msg: "" };
 const ordnerTitel = (n) => { const m = n.match(/^(\d{2})(\d{2})(\d{2})_?(.*)$/); return m ? `${m[3]}.${m[2]}.20${m[1]}${m[4] ? " · " + m[4].replace(/_/g, " ") : ""}` : n; };
 async function fotoArchiv(proj, base) {
-  if (FA.slug !== proj.slug) Object.assign(FA, { slug: proj.slug, ordner: null, fotos: {}, offen: new Set(), sel: new Map(), bereit: null, msg: "" });
+  if (FA.slug !== proj.slug || FA.base !== base) Object.assign(FA, { slug: proj.slug, base, ordner: null, fotos: {}, offen: new Set(), sel: new Map(), bereit: null, msg: "" });
   const el = () => $("#fa");
   const kachel = (o, f, i) => `<div class="fa-it${FA.sel.has(o + "/" + f.name) ? " sel" : ""}" data-o="${esc(o)}" data-i="${i}">
       ${f.thumb ? `<img src="${esc(f.thumb)}" alt="" loading="lazy">` : `<span class="fa-leer">${esc(f.name)}</span>`}
@@ -563,7 +582,7 @@ function fotoGross(o, i) {
       m.innerHTML = `<span>Wird vorbereitet …</span>`;
       try {
         let blob = await data.fotoJpeg(f.id, 2048);
-        if (!blob) { const roh = new Blob([await data.blob(`${CFG.projekteRoot}/${projects.find((p) => p.slug === FA.slug).ordner}/${projects.find((p) => p.slug === FA.slug).fotos}/${o}/${f.name}`, f.name)]); blob = (await verkleinern(roh, 2048)) || roh; }
+        if (!blob) { const roh = new Blob([await data.blob(`${FA.base}/${o}/${f.name}`, f.name)]); blob = (await verkleinern(roh, 2048)) || roh; }
         const datei = new File([blob], blob.type === "image/jpeg" ? o + "_" + f.name.replace(/\.[^.]+$/, "") + ".jpg" : o + "_" + f.name, { type: blob.type || "image/jpeg" });
         m.innerHTML = `<button class="btn" id="lb-jetzt">${TEILEN_SVG} Jetzt teilen</button>`;   // frischer Tipp für iOS
         $("#lb-jetzt").onclick = async (ev) => { ev.stopPropagation(); m.innerHTML = ""; await fotosTeilen([datei]); };
@@ -722,7 +741,7 @@ async function viewLV(proj) {
   const gTitle = Object.fromEntries(lv.gruppen.map((g) => [g.nr, g.titel]));
   const groups = new Map();
   for (const p of lv.positionen) {
-    const g = p.nr.split(".").slice(0, 2).join(".");
+    const g = p.nr.split(".").slice(0, -1).join(".");   // Titel = OZ ohne Positionsteil (01.01.0010 → 01.01, Grünpflege 01.0010 → 01)
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(p);
   }
@@ -799,9 +818,9 @@ async function viewLV(proj) {
     return `<div class="pos ${open ? "open" : ""}" data-nr="${esc(p.nr)}">
       <div class="pos-head"><span class="nr mono">${esc(p.nr)}</span>
         <span class="kurz">${hl(p.kurz, q)}${p.bedarf ? '<span class="tag">Bedarf</span>' : ""}${p.gekuerzt ? '<span class="tag">gekürzt</span>' : ""}</span></div>
-      <div class="pos-num"><span class="num">${menge(p.menge)} ${esc(p.einheit)} × ${eur(p.ep)}</span><b class="num">${eur(p.gp)}</b></div>
+      <div class="pos-num"><span class="num">${p.menge || p.ep ? `${menge(p.menge)} ${esc(p.einheit)} × ${eur(p.ep)}` : "Betrag ohne Mengenangabe"}</span><b class="num">${eur(p.gp)}</b></div>
       <div class="bar ${over ? "over" : ""}"><i style="width:${Math.min(100, x * 100)}%"></i></div>
-      <div class="pos-ist"><span class="num">Ist ${menge(p.ist_menge)} ${esc(p.einheit)} · ${eur(p.ist_gp)}</span><span class="p num ${over ? "over" : ""}">${nf(x * 100, 0, 0)} %</span></div>
+      <div class="pos-ist"><span class="num">Ist ${p.menge || p.ep ? `${menge(p.ist_menge)} ${esc(p.einheit)} · ` : ""}${eur(p.ist_gp)}</span><span class="p num ${over ? "over" : ""}">${nf(x * 100, 0, 0)} %</span></div>
       ${open ? `<div class="detail"><div class="dl">${esc(p.nr)}${p.gekuerzt ? ` · Auftragnehmer forderte ${menge(p.an_menge)} ${esc(p.einheit)}, geprüft ${menge(p.ist_menge)}` : ""}</div>${hl(p.lang, q)}</div>` : ""}
     </div>`;
   }
