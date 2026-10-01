@@ -307,7 +307,7 @@ async function viewFotos(proj) {
   if (FS.slug !== proj.slug && !FS.busy) { fotosReset(); FS.slug = proj.slug; FS.folders = null; }
   const base = `${CFG.projekteRoot}/${proj.ordner}/${proj.fotos}`;
   shell({ title: proj.name, back: "#/", tabs: tabsFor(proj, "fo") }, `
-    <label class="btn fo-pick"><input type="file" id="fo-in" accept="image/*" multiple hidden>＋ Fotos auswählen</label>
+    <label class="btn fo-pick"><input type="file" id="fo-in" accept="image/heic,image/heif,image/jpeg,image/png" multiple hidden>＋ Fotos auswählen</label>
     <div id="fo-body"></div>
     <div id="fa"></div>`);
   fotoArchiv(proj, base);
@@ -345,7 +345,7 @@ async function viewFotos(proj) {
           ${neu ? `<input type="text" class="fo-suf" data-k="${k}" placeholder="Zusatz (optional), z. B. Abbruch" value="${esc(FS.suffix[k] || "")}" ${FS.busy ? "disabled" : ""}>` : ""}
         </div>
         <div class="fo-grid">${idx.map((i) => { const it = FS.items[i]; return `<button class="fo-it${it.sel ? "" : " off"} st-${it.st || "neu"}" data-i="${i}" aria-label="${esc(it.name)}">
-          <img src="${it.url}" alt="" loading="lazy"><span class="fo-chk">✓</span>
+          <img src="${it.url}" alt="" loading="lazy" decoding="async"><span class="fo-chk">✓</span>
           <span class="fo-st">${{ ok: "✓ hochgeladen", da: "schon vorhanden", err: "Fehler" }[it.st] || ""}</span>
           <span class="fo-bar"><i style="width:${Math.round((it.p || 0) * 100)}%"></i></span></button>`; }).join("")}</div>
       </section>`;
@@ -361,11 +361,17 @@ async function viewFotos(proj) {
   FS.redraw = draw;
   draw();
 
+  // accept nennt HEIC ausdrücklich: Dann gibt das iPhone die Originale heraus, statt jedes Foto vorher in JPEG
+  // umzurechnen (das dauerte bei vielen Fotos nach dem blauen Haken sehr lange, und die JPEGs sind 2–3x größer).
   $("#fo-in").onchange = async (e) => {
     const files = [...e.target.files];
     e.target.value = "";
     const seen = new Set(FS.items.map((it) => it.file.name + "|" + it.file.size));
-    for (const f of files) {
+    const el = $("#fo-body"), zeig = (n) => { if (el && files.length > 3) el.innerHTML = `<div class="note">${n} von ${files.length} Fotos eingelesen …</div>`; };
+    zeig(0);
+    for (let n = 0; n < files.length; n++) {
+      const f = files[n];
+      if (n % 5 === 0) zeig(n);
       if (seen.has(f.name + "|" + f.size)) continue;
       const { d, exif } = await aufnahmeDatum(f);
       FS.items.push({ file: f, url: URL.createObjectURL(f), sel: true, d, exif, st: "", p: 0 });
