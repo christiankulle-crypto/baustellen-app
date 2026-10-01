@@ -245,3 +245,7 @@ button, .v-tools button { -webkit-touch-callout: none; -webkit-user-select: none
 .v-msg span { display: inline-block; background: rgba(0,0,0,.72); color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 14px; }
 .tabs a { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 430px) { .tabs { gap: 2px; } .tabs a { font-size: 14px; } }
+
+/* Text im Plan: Eingabefeld an der Stelle, an der der Text sitzen wird */
+.v-txt { position: absolute; z-index: 15; margin: 0; border: 1.5px dashed #0a58ca; border-radius: 2px; outline: none; resize: none; overflow: hidden;
+  box-sizing: border-box; font-family: system-ui, sans-serif; font-weight: 600; line-height: 1.25; white-space: pre; touch-action: auto; }

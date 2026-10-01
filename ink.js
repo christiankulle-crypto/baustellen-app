@@ -73,17 +73,38 @@ const Ink = (() => {
       ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     }
   }
+  /* Text: Größe als Bruchteil der Seitenbreite (wächst beim Zoomen mit wie die Skizzen), weiß hinterlegt zum Lesen */
+  let mctx = null;
+  function textMass(st, W) {   // Maße in Ausgabepixeln; W = Seitenbreite in Ausgabepixeln
+    const fs = st.fs * W, zeilen = st.t.split("\n"), pad = fs * 0.25;
+    mctx = mctx || document.createElement("canvas").getContext("2d");
+    mctx.font = `600 ${fs}px system-ui, sans-serif`;
+    return { fs, zeilen, pad, w: Math.max(...zeilen.map((z) => mctx.measureText(z).width)) + 2 * pad, h: zeilen.length * fs * 1.25 + 2 * pad };
+  }
+  function drawText(ctx, st, X, Y, W) {
+    const m = textMass(st, W), x = X(st.p[0][0]), y = Y(st.p[0][1]);
+    ctx.fillStyle = st.m ? "rgba(255,214,10,.75)" : "rgba(255,255,255,.85)";
+    ctx.fillRect(x, y, m.w, m.h);
+    ctx.font = `600 ${m.fs}px system-ui, sans-serif`; ctx.fillStyle = st.m ? "#111111" : st.c; ctx.textBaseline = "top";
+    m.zeilen.forEach((z, i) => ctx.fillText(z, x + m.pad, y + m.pad + i * m.fs * 1.25 + m.fs * 0.12));
+    ctx.textBaseline = "alphabetic";
+  }
+  function zeichne(ctx, st, X, Y, W, ps) {
+    if (st.type === "mline" || st.type === "marea") drawMeasureShape(ctx, st, X, Y, ps);
+    else if (st.type === "text") drawText(ctx, st, X, Y, W);
+    else strokePath(ctx, st, X, Y, W);
+  }
   function redraw() {
     const c = cv(), d = dprOf(), w = Math.round(vw().clientWidth * d), h = Math.round(vw().clientHeight * d);
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, w, h);
+    positionEditor();
     if (!S.visible || !V.pg || !V.w) return;
     const X = (nx) => (V.tx + nx * V.w * V.s) * d, Y = (ny) => (V.ty + ny * V.h * V.s) * d, W = V.w * V.s * d;
     for (const st of S.strokes) {
-      if (st.pg !== V.page) continue;
-      if (st.type === "mline" || st.type === "marea") drawMeasureShape(ctx, st, X, Y, d);
-      else strokePath(ctx, st, X, Y, W);
+      if (st.pg !== V.page || (S.edit && S.edit.st === st)) continue;   // Text in Bearbeitung zeigt nur das Eingabefeld
+      zeichne(ctx, st, X, Y, W, d);
     }
     if (S.cur) strokePath(ctx, S.cur, X, Y, W);
     if (S.measure && S.measure.pg === V.page && S.measure.p.length) {
@@ -132,7 +153,8 @@ const Ink = (() => {
     const sc = V.w * V.s, keep = [];
     for (const st of S.strokes) {
       if (st.pg !== V.page) { keep.push(st); continue; }
-      const P = st.p.map((q) => [V.tx + q[0] * sc, V.ty + q[1] * V.h * V.s]);
+      if (st.type === "text") { (textHit(st, x, y) ? S.erased : keep).push(st); continue; }
+      const P =st.p.map((q) => [V.tx + q[0] * sc, V.ty + q[1] * V.h * V.s]);
       const segs = P.length > 1 ? P.length - (st.closed ? 0 : 1) : 0, r = 16 + ((st.w || 0.006) * sc) / 2;
       let hit = P.length === 1 ? Math.hypot(P[0][0] - x, P[0][1] - y) <= r : false;
       for (let i = 0; i < segs && !hit; i++) {
@@ -148,6 +170,14 @@ const Ink = (() => {
   function down(e, [x, y]) {
     if (!V.pg) return false;
     if (e.pointerType === "mouse" && e.button !== 0) return false;   // nur linke Maustaste zeichnet/misst/radiert, Mitte/Rechts bleibt zum Verschieben frei
+    if (S.tool === "text") {
+      if (S.pid !== null) return true;
+      if (S.edit) { textFertig(); return true; }   // Klick daneben beendet nur die Eingabe
+      S.pid = e.pointerId;
+      const st = textAt(x, y);
+      S.txtDrag = st ? { st, x, y, p0: st.p, moved: false } : { neu: [x, y] };
+      return true;
+    }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== null) return true;   // Handballen/zweiten Finger ignorieren
       S.pid = e.pointerId;
@@ -165,6 +195,15 @@ const Ink = (() => {
     frame(); return true;
   }
   function move(e, rel) {
+    if (S.tool === "text") {
+      if (S.pid !== e.pointerId) return false;
+      const d = S.txtDrag;
+      if (d && d.st) {
+        const [x, y] = rel(e);
+        if (d.moved || Math.hypot(x - d.x, y - d.y) > 4) { d.moved = true; d.st.p = [[d.p0[0][0] + (x - d.x) / (V.w * V.s), d.p0[0][1] + (y - d.y) / (V.h * V.s)]]; frame(); }
+      }
+      return true;
+    }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== e.pointerId) return false;
       if (S.dragPt) {
@@ -188,6 +227,15 @@ const Ink = (() => {
     frame(); return true;
   }
   function up(e) {
+    if (S.tool === "text") {
+      if (S.pid !== e.pointerId) return false;
+      S.pid = null;
+      const d = S.txtDrag; S.txtDrag = null;
+      if (d && d.st && d.moved) { S.hist.push({ t: "move", s: d.st, p: d.p0 }); save(); updateUi(); }
+      else if (d && d.st) textEditor(d.st, false);
+      else if (d) { const [nx, ny] = toN(d.neu[0], d.neu[1]); textEditor({ pg: V.page, type: "text", p: [[nx, ny]], t: "", c: S.color, m: S.alpha < 1, fs: (TXT_PX[S.wpx] || 16) / (V.w * V.s) }, true); }
+      return true;
+    }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== e.pointerId) return false;
       S.pid = null;
@@ -203,9 +251,60 @@ const Ink = (() => {
   const undo = () => {
     const h = S.hist.pop();
     if (!h) return;
-    if (h.t === "add") S.strokes = S.strokes.filter((s) => s !== h.s); else S.strokes.push(...h.list);
+    if (h.t === "add") S.strokes = S.strokes.filter((s) => s !== h.s);
+    else if (h.t === "text") Object.assign(h.s, h.alt);
+    else if (h.t === "move") h.s.p = h.p;
+    else S.strokes.push(...h.list);
     save(); redraw(); updateUi();
   };
+
+  /* ---- Text: Stelle anklicken, schreiben, Enter = fertig (Umschalt+Enter = neue Zeile), Esc = abbrechen.
+     Vorhandenen Text mit dem Textwerkzeug anklicken = ändern (leer machen = löschen), ziehen = verschieben. ---- */
+  const TXT_PX = { 2: 12, 4: 16, 8: 24 };   // Schriftgröße je Strichstärke-Knopf, in Bildschirmpixeln beim Setzen
+  function textHit(st, x, y) {
+    const W = V.w * V.s, m = textMass(st, W), x0 = V.tx + st.p[0][0] * W, y0 = V.ty + st.p[0][1] * V.h * V.s;
+    return x >= x0 - 6 && x <= x0 + m.w + 6 && y >= y0 - 6 && y <= y0 + m.h + 6;
+  }
+  const textAt = (x, y) => [...S.strokes].reverse().find((st) => st.type === "text" && st.pg === V.page && textHit(st, x, y));
+  const textStand = (st) => ({ t: st.t, c: st.c, m: st.m, fs: st.fs });
+  function textEditor(st, neu) {
+    const ta = document.createElement("textarea");
+    ta.className = "v-txt"; ta.value = st.t; ta.rows = 1; ta.spellcheck = true;
+    ta.setAttribute("aria-label", "Text für den Plan");
+    vw().appendChild(ta);
+    S.edit = { st, neu, ta, alt: textStand(st) };
+    ta.addEventListener("pointerdown", (e) => e.stopPropagation());   // im Feld klicken = Cursor setzen, nicht neuer Text
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); textFertig(); }
+      else if (e.key === "Escape") { e.preventDefault(); textFertig(true); }
+    });
+    ta.addEventListener("input", positionEditor);
+    ta.addEventListener("blur", () => textFertig());
+    frame(); positionEditor();
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+  }
+  function positionEditor() {
+    const e = S.edit;
+    if (!e) return;
+    const W = V.w * V.s, st = e.st, m = textMass({ ...st, t: e.ta.value || " " }, W);
+    Object.assign(e.ta.style, {
+      left: V.tx + st.p[0][0] * W + "px", top: V.ty + st.p[0][1] * V.h * V.s + "px",
+      fontSize: m.fs + "px", padding: m.pad + "px", width: Math.max(m.w, m.fs * 3) + m.fs + "px", height: m.h + 4 + "px",
+      color: st.m ? "#111111" : st.c, background: st.m ? "rgba(255,214,10,.75)" : "rgba(255,255,255,.95)",
+    });
+  }
+  function textFertig(abbrechen) {
+    const e = S.edit;
+    if (!e) return;
+    S.edit = null;   // vor dem Entfernen, weil remove() noch ein blur auslöst
+    const t = e.ta.value.replace(/\s+$/, "");
+    e.ta.remove();
+    if (abbrechen) Object.assign(e.st, e.alt);
+    else if (e.neu) { if (t) { e.st.t = t; S.strokes.push(e.st); S.hist.push({ t: "add", s: e.st }); save(); } }
+    else if (!t) { S.strokes = S.strokes.filter((s) => s !== e.st); S.hist.push({ t: "del", list: [Object.assign(e.st, e.alt)] }); save(); }
+    else { e.st.t = t; const neuStand = textStand(e.st); if (JSON.stringify(neuStand) !== JSON.stringify(e.alt)) { S.hist.push({ t: "text", s: e.st, alt: e.alt }); save(); } }
+    frame(); updateUi();
+  }
 
   /* ---- Strecke/Fläche: Punkt für Punkt, vorhandene Punkte anfassbar ---- */
   function findNearbyPoint(x, y) {
@@ -264,6 +363,7 @@ const Ink = (() => {
   }
   function pageChanged() {   // Seite gewechselt (nicht nur Fenstergröße): unfertige Messung verwerfen, sie gehörte zur alten Seite
     if (S.measure && S.measure.pg !== V.page) cancelMeasure();
+    if (S.edit && S.edit.st.pg !== V.page) textFertig();
     if (S.tool === "calib") S.calib = [];
     S.dragPt = null;
   }
@@ -309,8 +409,10 @@ const Ink = (() => {
 
   /* ---- Oberfläche ---- */
   function updateUi() {
+    if (S.edit && S.tool !== "text") textFertig();   // anderes Werkzeug gewählt: Eingabe abschließen
     const q = (id) => document.getElementById(id);
     q("t-draw").classList.toggle("on", S.draw);
+    q("t-text").classList.toggle("on", S.tool === "text");
     q("t-erase").classList.toggle("on", S.erase);
     q("t-mline").classList.toggle("on", S.tool === "mline");
     q("t-marea").classList.toggle("on", S.tool === "marea");
@@ -327,6 +429,13 @@ const Ink = (() => {
     const on = (id, f) => { document.getElementById(id).onclick = f; };
     on("t-draw", () => { S.draw = !S.draw; if (S.draw) { S.erase = false; S.tool = null; cancelMeasure(); } updateUi(); vmsg(S.draw ? "Zeichnen mit Finger an. Zum Verschieben und Zoomen wieder ausschalten." : ""); setTimeout(() => vmsg(""), 2500); });
     on("t-erase", () => { S.erase = !S.erase; if (S.erase) { S.draw = false; S.tool = null; cancelMeasure(); } updateUi(); });
+    on("t-text", () => {
+      S.draw = false; S.erase = false; cancelMeasure();
+      S.tool = S.tool === "text" ? null : "text";
+      updateUi();
+      vmsg(S.tool === "text" ? "Auf den Plan klicken und schreiben. Enter = fertig, Umschalt+Enter = neue Zeile." : "");
+      setTimeout(() => vmsg(""), 3500);
+    });
     on("t-mline", () => selectTool("mline"));
     on("t-marea", () => selectTool("marea"));
     on("t-scale", () => { S.pendingTool = null; openScalePanel(); });
@@ -341,15 +450,24 @@ const Ink = (() => {
     });
     on("t-share", share);
     on("t-shot", shareView);
+    // Farbe/Stärke: beim Textwerkzeug bleibt es aktiv, ein gerade bearbeiteter Text übernimmt Farbe bzw. Größe
+    const fuerText = () => { if (S.edit) { positionEditor(); S.edit.ta.focus(); } };
     document.querySelectorAll("#v-tools [data-c]").forEach((b) => (b.onclick = () => {
-      S.erase = false; S.tool = null; cancelMeasure();
-      S.color = b.dataset.c; S.alpha = +(b.dataset.a || 1); S.mult = +(b.dataset.m || 1); updateUi();
+      S.erase = false; if (S.tool !== "text") S.tool = null; cancelMeasure();
+      S.color = b.dataset.c; S.alpha = +(b.dataset.a || 1); S.mult = +(b.dataset.m || 1);
+      if (S.edit) { S.edit.st.c = S.color; S.edit.st.m = S.alpha < 1; }
+      updateUi(); fuerText();
     }));
-    document.querySelectorAll("#v-tools [data-w]").forEach((b) => (b.onclick = () => { S.tool = null; cancelMeasure(); S.wpx = +b.dataset.w; updateUi(); }));
+    document.querySelectorAll("#v-tools [data-w]").forEach((b) => (b.onclick = () => {
+      if (S.tool !== "text") S.tool = null; cancelMeasure(); S.wpx = +b.dataset.w;
+      if (S.edit) S.edit.st.fs = (TXT_PX[S.wpx] || 16) / (V.w * V.s);
+      updateUi(); fuerText();
+    }));
   }
 
   /* ---- Öffnen, Schließen, Liste ---- */
   async function open(key) {
+    if (S.edit) { S.edit.ta.remove(); S.edit = null; }
     S.key = key; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.visible = true; S.erase = false; S.draw = false;
     S.tool = null; S.measure = null; S.calib = null; S.pendingTool = null; S.scale = null; S.dragPt = null;
     document.getElementById("v-scale").hidden = true; renderBar();
@@ -357,6 +475,7 @@ const Ink = (() => {
     try { const r = await tx("readonly", (s) => s.get(key)); if (r && S.key === key) { S.strokes = r.strokes || []; S.scale = r.mProPt || null; updateUi(); redraw(); } } catch { /* ohne Speicher weiterarbeiten */ }
   }
   async function close() {
+    textFertig();
     clearTimeout(saveT);
     if (S.key) await persist(S.key, S.strokes, S.scale);
     S.key = null; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.tool = null; S.measure = null; S.calib = null; S.dragPt = null;
@@ -400,10 +519,7 @@ const Ink = (() => {
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
     await V.pg.render({ canvasContext: ctx, viewport: V.pg.getViewport({ scale: k }) }).promise;
     const X = (nx) => nx * c.width, Y = (ny) => ny * c.height;
-    for (const st of mine) {
-      if (st.type === "mline" || st.type === "marea") drawMeasureShape(ctx, st, X, Y, k);
-      else strokePath(ctx, st, X, Y, c.width);
-    }
+    for (const st of mine) zeichne(ctx, st, X, Y, c.width, k);
     const jpg = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.9));
     const pdf = bildAlsPdf(new Uint8Array(await jpg.arrayBuffer()), c.width, c.height, base.width, base.height);
     const seite = V.doc.numPages > 1 ? `_Seite${V.page}` : "";
