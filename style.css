@@ -1,12 +1,12 @@
 :root {
   --bg: #f5f4ee; --card: #ffffff; --border: #ddd9cb; --text: #22271e; --muted: #6b705f;
-  --accent: #3d6a41; --accent-soft: #e3ece2; --warn: #a8491d; --warn-soft: #f6e6dc; --bar: #e8e5d8;
+  --accent: #3d6a41; --accent-soft: #e3ece2; --warn: #a8491d; --warn-soft: #f6e6dc; --bar: #e8e5d8; --titel: #e9f1e5;
   --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161915; --card: #1f231c; --border: #333829; --text: #e7eadf; --muted: #9aa08c;
-    --accent: #7fb384; --accent-soft: #25301f; --warn: #e08a5c; --warn-soft: #3a2a20; --bar: #2c3125;
+    --accent: #7fb384; --accent-soft: #25301f; --warn: #e08a5c; --warn-soft: #3a2a20; --bar: #2c3125; --titel: #232b1f;
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -58,6 +58,8 @@ details.grp > summary::-webkit-details-marker { display: none; }
 .g-title { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
 .g-title .arrow { color: var(--muted); transition: transform .15s; }
 details[open] .g-title .arrow { transform: rotate(90deg); }
+/* LV-Titel blassgrün hinterlegt, damit sie sich aufgeklappt von den Positionen (weiß) abheben */
+details.grp[data-g] > summary { background: var(--titel); }
 .g-sub { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 4px; }
 .bar { height: 8px; background: var(--bar); border-radius: 99px; overflow: hidden; position: relative; margin-top: 6px; }
 .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
