@@ -252,3 +252,4 @@ button, .v-tools button { -webkit-touch-callout: none; -webkit-user-select: none
 .v-txtbar { position: absolute; z-index: 16; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.22); overflow: visible; }
 .v-txtbar button.t-txt { min-width: 38px; font-size: 14px; }
 .fo-ort { margin-bottom: 10px; }
+#v-selbar[hidden] { display: none; }

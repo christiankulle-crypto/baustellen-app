@@ -127,13 +127,14 @@ const Ink = (() => {
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, w, h);
     positionEditor();
-    if (!S.visible || !V.pg || !V.w) return;
+    if (!S.visible || !V.pg || !V.w) { selBar(); return; }
     const X = (nx) => (V.tx + nx * V.w * V.s) * d, Y = (ny) => (V.ty + ny * V.h * V.s) * d, W = V.w * V.s * d;
     for (const st of S.strokes) {
       if (st.pg !== V.page || (S.edit && S.edit.st === st)) continue;   // Text in Bearbeitung zeigt nur das Eingabefeld
       zeichne(ctx, st, X, Y, W, d);
     }
     if (S.cur) zeichne(ctx, S.cur, X, Y, W, d);
+    zeichneAuswahl(ctx, d); zeichneFang(ctx, d); selBar();
     if (S.measure && S.measure.pg === V.page && S.measure.p.length) {
       drawMeasureShape(ctx, { p: S.measure.p, closed: S.tool === "marea" && S.measure.p.length > 2, label: shapeLabel(S.tool, S.measure.p) }, X, Y, d);
     }
@@ -176,23 +177,137 @@ const Ink = (() => {
 
   /* ---- Eingabe ---- */
   const toN = (x, y) => [(x - V.tx) / (V.w * V.s), (y - V.ty) / (V.h * V.s)];
-  function eraseAt(x, y) {
-    const sc = V.w * V.s, keep = [];
-    for (const st of S.strokes) {
-      if (st.pg !== V.page) { keep.push(st); continue; }
-      if (st.type === "text") { (textHit(st, x, y) ? S.erased : keep).push(st); continue; }
-      const form = st.type === "form", closed = form ? st.form !== "pfeil" : st.closed;   // Formen: am Umriss treffen
-      const P = (form ? formPunkte(st) : st.p).map((q) => [V.tx + q[0] * sc, V.ty + q[1] * V.h * V.s]);
-      const segs = P.length > 1 ? P.length - (closed ? 0 : 1) : 0, r = 16 + ((st.w || 0.006) * sc) / 2;
-      let hit = P.length === 1 ? Math.hypot(P[0][0] - x, P[0][1] - y) <= r : false;
-      for (let i = 0; i < segs && !hit; i++) {
-        const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
-        const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
-        hit = Math.hypot(ax + t * dx - x, ay + t * dy - y) <= r;
-      }
-      if (hit) S.erased.push(st); else keep.push(st);
+  /* Trifft (x, y) in Bildschirmpunkten das Objekt? Linien/Formen am Umriss (Abstand rand + halbe Strichbreite), Text im Rahmen */
+  function trifft(st, x, y, rand) {
+    if (st.type === "text") return textHit(st, x, y);
+    const sc = V.w * V.s, form = st.type === "form", closed = form ? st.form !== "pfeil" : st.closed;
+    const P = (form ? formPunkte(st) : st.p).map((q) => [V.tx + q[0] * sc, V.ty + q[1] * V.h * V.s]);
+    const segs = P.length > 1 ? P.length - (closed ? 0 : 1) : 0, r = rand + ((st.w || 0.006) * sc) / 2;
+    if (P.length === 1) return Math.hypot(P[0][0] - x, P[0][1] - y) <= r;
+    for (let i = 0; i < segs; i++) {
+      const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+      const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+      if (Math.hypot(ax + t * dx - x, ay + t * dy - y) <= r) return true;
     }
+    return false;
+  }
+  function eraseAt(x, y) {
+    const keep = [];
+    for (const st of S.strokes) (st.pg === V.page && trifft(st, x, y, 16) ? S.erased : keep).push(st);
     S.strokes = keep;
+  }
+
+  /* ---- Auswahl: Objekt anklicken = markieren, ziehen = verschieben, Griffe = Ecken/Endpunkte ändern.
+     Beim Ziehen rasten Punkte an Ecken und Endpunkten anderer Objekte ein (Objektfang). Messungen haben eigene Punkte. ---- */
+  const kopie = (p) => p.map((q) => q.slice());
+  const waehlbar = (st) => st.pg === V.page && st.type !== "mline" && st.type !== "marea";
+  const scr = (q) => [V.tx + q[0] * V.w * V.s, V.ty + q[1] * V.h * V.s];
+  function griffeVon(st, p) {   // Griffe (normiert) für die Punkte p des Objekts
+    if (st.type !== "form") return [];
+    const [a, b] = p;
+    return st.form === "pfeil" ? [a, b] : [a, [b[0], a[1]], b, [a[0], b[1]]];
+  }
+  function setzeGriff(st, i, q, p0) {
+    const [a, b] = kopie(p0);
+    if (st.form === "pfeil") { (i === 0 ? a : b).splice(0, 2, q[0], q[1]); }
+    else {
+      if (i === 0 || i === 3) a[0] = q[0]; else b[0] = q[0];
+      if (i === 0 || i === 1) a[1] = q[1]; else b[1] = q[1];
+    }
+    st.p = [a, b];
+  }
+  function fangPunkteVon(st, p) {   // Punkte, die beim Verschieben einrasten bzw. an denen andere einrasten
+    if (st.type === "form") {
+      const g = griffeVon(st, p);
+      return st.form === "kreis" ? g.concat([[(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2]]) : g;
+    }
+    if (st.type === "text") return [];
+    return p.length > 1 ? [p[0], p[p.length - 1]] : p;
+  }
+  function fangZiele(ausser) {
+    const out = [];
+    for (const st of S.strokes) if (st !== ausser && st.pg === V.page) out.push(...fangPunkteVon(st, st.p));
+    return out;
+  }
+  const FANG_PX = 10;
+  function fang(q, ausser) {   // Punkt q (normiert) an das nächste Ziel im Umkreis setzen
+    const [sx, sy] = scr(q);
+    let best = null, bd = FANG_PX;
+    for (const z of fangZiele(ausser)) { const [zx, zy] = scr(z), d = Math.hypot(zx - sx, zy - sy); if (d < bd) { bd = d; best = z; } }
+    S.fangPunkt = best;
+    return best ? best.slice() : q;
+  }
+  function fangVersatz(st, p0, dx, dy) {   // ganzes Objekt verschieben: einrasten, wenn einer seiner Punkte nah an ein Ziel kommt
+    const ziele = fangZiele(st).map(scr);
+    let best = null, bd = FANG_PX;
+    for (const k of fangPunkteVon(st, p0)) {
+      const [kx, ky] = scr([k[0] + dx, k[1] + dy]);
+      for (const [zx, zy] of ziele) { const d = Math.hypot(zx - kx, zy - ky); if (d < bd) { bd = d; best = [zx - kx, zy - ky, zx, zy]; } }
+    }
+    S.fangPunkt = best ? toN(best[2], best[3]) : null;
+    return best ? [dx + best[0] / (V.w * V.s), dy + best[1] / (V.h * V.s)] : [dx, dy];
+  }
+  function rahmen(st) {   // Rahmen in Bildschirmpunkten [x0, y0, x1, y1]
+    if (st.type === "text") { const W = V.w * V.s, m = textMass(st, W), [x, y] = scr(st.p[0]); return [x, y, x + m.w, y + m.h]; }
+    const P = (st.type === "form" ? formPunkte(st) : st.p).map(scr), hw = ((st.w || 0) * V.w * V.s) / 2;
+    const xs = P.map((p) => p[0]), ys = P.map((p) => p[1]);
+    return [Math.min(...xs) - hw, Math.min(...ys) - hw, Math.max(...xs) + hw, Math.max(...ys) + hw];
+  }
+  function griffAt(x, y, touch) {
+    if (!S.sel || !S.strokes.includes(S.sel) || S.sel.pg !== V.page) return -1;
+    const R = touch ? 22 : 12;
+    return griffeVon(S.sel, S.sel.p).findIndex((g) => { const [gx, gy] = scr(g); return Math.hypot(gx - x, gy - y) <= R; });
+  }
+  function auswahlAt(x, y, touch) {
+    if (S.sel && S.strokes.includes(S.sel) && S.sel.pg === V.page) {   // markiertes Objekt: auch im Inneren anfassbar
+      const [x0, y0, x1, y1] = rahmen(S.sel);
+      if (x >= x0 - 8 && x <= x1 + 8 && y >= y0 - 8 && y <= y1 + 8) return S.sel;
+    }
+    for (let i = S.strokes.length - 1; i >= 0; i--) { const st = S.strokes[i]; if (waehlbar(st) && trifft(st, x, y, touch ? 14 : 8)) return st; }
+    return null;
+  }
+  function waehle(st) { S.sel = st; S.fangPunkt = null; frame(); selBar(); }
+  function loescheAuswahl() {
+    const st = S.sel;
+    if (!st || !S.strokes.includes(st)) return;
+    S.strokes = S.strokes.filter((s) => s !== st); S.hist.push({ t: "del", list: [st] });
+    S.sel = null; save(); frame(); updateUi(); selBar();
+  }
+  function selBar() {   // kleine Leiste am markierten Objekt: löschen, Markierung aufheben
+    let b = document.getElementById("v-selbar");
+    const zeigen = S.sel && S.strokes.includes(S.sel) && S.sel.pg === V.page && S.visible && !S.drag;
+    if (!zeigen) { if (b) b.hidden = true; return; }
+    if (!b) {
+      b = document.createElement("div"); b.id = "v-selbar"; b.className = "v-tools v-txtbar";
+      b.innerHTML = `<button data-weg aria-label="Markiertes Objekt löschen (Entf)"><svg class="ic" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5m4-5v5"/></svg></button><button data-ab aria-label="Markierung aufheben (Esc)">✕</button>`;
+      ["pointerdown", "mousedown"].forEach((t) => b.addEventListener(t, (e) => { e.preventDefault(); e.stopPropagation(); }));
+      b.addEventListener("click", (e) => { if (e.target.closest("[data-weg]")) loescheAuswahl(); else if (e.target.closest("[data-ab]")) waehle(null); });
+      vw().appendChild(b);
+    }
+    b.hidden = false;
+    const [x0, y0, x1] = rahmen(S.sel), bh = b.offsetHeight || 46;
+    b.style.left = Math.max(4, Math.min(x1 - b.offsetWidth, vw().clientWidth - b.offsetWidth - 4)) + "px";
+    b.style.top = (y0 - bh - 12 >= 4 ? y0 - bh - 12 : rahmen(S.sel)[3] + 12) + "px";
+  }
+  function zeichneAuswahl(ctx, d) {
+    if (!S.sel || !S.strokes.includes(S.sel) || S.sel.pg !== V.page) return;
+    const [x0, y0, x1, y1] = rahmen(S.sel);
+    ctx.save();
+    ctx.strokeStyle = "#0a58ca"; ctx.lineWidth = 1 * d; ctx.setLineDash([5 * d, 4 * d]);
+    ctx.strokeRect((x0 - 5) * d, (y0 - 5) * d, (x1 - x0 + 10) * d, (y1 - y0 + 10) * d);
+    ctx.setLineDash([]);
+    for (const g of griffeVon(S.sel, S.sel.p)) {
+      const [gx, gy] = scr(g);
+      ctx.fillStyle = "#ffffff"; ctx.fillRect((gx - 5) * d, (gy - 5) * d, 10 * d, 10 * d);
+      ctx.lineWidth = 1.5 * d; ctx.strokeRect((gx - 5) * d, (gy - 5) * d, 10 * d, 10 * d);
+    }
+    ctx.restore();
+  }
+  function zeichneFang(ctx, d) {   // eingerasteter Punkt: kleines Quadrat in Magenta
+    if (!S.fangPunkt || !(S.drag || (S.cur && S.cur.type === "form"))) return;
+    const [x, y] = scr(S.fangPunkt);
+    ctx.save(); ctx.strokeStyle = "#c026d3"; ctx.lineWidth = 2 * d;
+    ctx.strokeRect((x - 7) * d, (y - 7) * d, 14 * d, 14 * d); ctx.restore();
   }
   /* Gibt true zurück, wenn Ink das Ereignis behandelt (dann macht der Viewer kein Schieben/Zoomen). */
   function down(e, [x, y]) {
@@ -209,10 +324,22 @@ const Ink = (() => {
       return true;
     }
     if (S.edit && e.pointerType === "mouse") textFertig();   // Klick daneben (ohne Textwerkzeug): Eingabe beenden, Plan normal schieben
+    const touch = e.pointerType === "touch";
+    if (!S.erase && !S.draw && S.tool !== "mline" && S.tool !== "marea" && S.tool !== "calib" && S.pid === null) {
+      const g = griffAt(x, y, touch);   // Griff des markierten Objekts: Ecke/Endpunkt ziehen (auch bei gewähltem Formwerkzeug)
+      if (g >= 0) { S.pid = e.pointerId; S.drag = { art: "griff", i: g, st: S.sel, p0: kopie(S.sel.p) }; selBar(); return true; }
+      if (!S.tool && e.pointerType !== "pen" && S.visible) {
+        const st = auswahlAt(x, y, touch);
+        // Finger: erst antippen = markieren, sonst würde jedes Wischen über eine Skizze sie verschieben statt den Plan
+        if (st && touch && st !== S.sel) { S.tipp = { id: e.pointerId, st, x, y }; return false; }
+        if (st) { S.sel = st; S.pid = e.pointerId; S.drag = { art: "move", st, x, y, p0: kopie(st.p), moved: false }; frame(); return true; }
+        if (S.sel) waehle(null);   // daneben: Markierung aufheben, Plan normal verschieben
+      }
+    }
     if (FORMEN.includes(S.tool)) {   // Rechteck/Kreis/Pfeil aufziehen (Finger, Stift oder Maus)
       if (S.pid !== null) return true;
       S.pid = e.pointerId; S.pen = e.pointerType === "pen";
-      const q = toN(x, y);
+      const q = e.altKey ? toN(x, y) : fang(toN(x, y), null);
       S.cur = { pg: V.page, type: "form", form: S.tool, c: S.color, a: S.alpha, w: (S.wpx * S.mult) / (V.w * V.s), p: [q, q.slice()] };
       frame(); return true;
     }
@@ -242,14 +369,31 @@ const Ink = (() => {
       }
       return true;
     }
+    if (S.drag) {   // markiertes Objekt verschieben bzw. Griff ziehen; Alt = ohne Objektfang
+      if (S.pid !== e.pointerId) return false;
+      const [x, y] = rel(e), d = S.drag;
+      if (d.art === "move") {
+        if (!d.moved && Math.hypot(x - d.x, y - d.y) < 4) return true;
+        d.moved = true;
+        let dx = (x - d.x) / (V.w * V.s), dy = (y - d.y) / (V.h * V.s);
+        if (e.altKey) S.fangPunkt = null; else [dx, dy] = fangVersatz(d.st, d.p0, dx, dy);
+        d.st.p = d.p0.map((q) => [q[0] + dx, q[1] + dy]);
+      } else {
+        const q = e.altKey ? ((S.fangPunkt = null), toN(x, y)) : fang(toN(x, y), d.st);
+        setzeGriff(d.st, d.i, q, d.p0);
+      }
+      frame(); return true;
+    }
+    if (S.tipp && S.tipp.id === e.pointerId) { const [x, y] = rel(e); if (Math.hypot(x - S.tipp.x, y - S.tipp.y) > 8) S.tipp = null; return false; }
     if (S.cur && S.cur.type === "form") {
       if (S.pid !== e.pointerId) return false;
       let [x, y] = rel(e);
       if (e.shiftKey && S.cur.form !== "pfeil") {   // Umschalt: Quadrat bzw. Kreis
         const sx = V.tx + S.cur.p[0][0] * V.w * V.s, sy = V.ty + S.cur.p[0][1] * V.h * V.s, d = Math.max(Math.abs(x - sx), Math.abs(y - sy));
         x = sx + Math.sign(x - sx || 1) * d; y = sy + Math.sign(y - sy || 1) * d;
-      }
-      S.cur.p[1] = toN(x, y); frame(); return true;
+        S.fangPunkt = null; S.cur.p[1] = toN(x, y);
+      } else S.cur.p[1] = e.altKey ? ((S.fangPunkt = null), toN(x, y)) : fang(toN(x, y), null);
+      frame(); return true;
     }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
       if (S.pid !== e.pointerId) return false;
@@ -283,11 +427,23 @@ const Ink = (() => {
       else if (d) { const [nx, ny] = toN(d.neu[0], d.neu[1]); textEditor({ pg: V.page, type: "text", p: [[nx, ny]], t: "", c: S.color, m: S.alpha < 1, fs: (TXT_PX[S.wpx] || 16) / (V.w * V.s) }, true); }
       return true;
     }
-    if (S.cur && S.cur.type === "form") {
+    if (S.drag) {
       if (S.pid !== e.pointerId) return false;
       S.pid = null;
+      const d = S.drag; S.drag = null; S.fangPunkt = null;
+      if (JSON.stringify(d.p0) !== JSON.stringify(d.st.p)) { S.hist.push({ t: "move", s: d.st, p: d.p0 }); save(); }
+      frame(); updateUi(); return true;
+    }
+    if (S.tipp && S.tipp.id === e.pointerId) {   // Finger hat ein Objekt nur angetippt: markieren (Text: bearbeiten)
+      const st = S.tipp.st; S.tipp = null;
+      if (st.type === "text") textEditor(st, false); else waehle(st);
+      return false;
+    }
+    if (S.cur && S.cur.type === "form") {
+      if (S.pid !== e.pointerId) return false;
+      S.pid = null; S.fangPunkt = null;
       const [a, b] = S.cur.p;
-      if (Math.hypot((a[0] - b[0]) * V.w * V.s, (a[1] - b[1]) * V.h * V.s) > 6) { S.strokes.push(S.cur); S.hist.push({ t: "add", s: S.cur }); save(); }   // nur Antippen: nichts anlegen
+      if (Math.hypot((a[0] - b[0]) * V.w * V.s, (a[1] - b[1]) * V.h * V.s) > 6) { S.strokes.push(S.cur); S.hist.push({ t: "add", s: S.cur }); S.sel = S.cur; save(); }   // neue Form gleich markiert (Griffe); nur Antippen: nichts anlegen
       S.cur = null; frame(); updateUi(); return true;
     }
     if (S.tool === "mline" || S.tool === "marea" || S.tool === "calib") {
@@ -442,7 +598,8 @@ const Ink = (() => {
     if (S.measure && S.measure.pg !== V.page) cancelMeasure();
     if (S.edit && S.edit.st.pg !== V.page) textFertig();
     if (S.tool === "calib") S.calib = [];
-    S.dragPt = null;
+    S.dragPt = null; S.drag = null; S.tipp = null;
+    if (S.sel && S.sel.pg !== V.page) waehle(null);
   }
 
   /* ---- Maßstab: Dropdown oder Kalibrieren (zwei Punkte antippen, echte Länge eingeben) ---- */
@@ -487,6 +644,8 @@ const Ink = (() => {
   /* ---- Oberfläche ---- */
   function updateUi() {
     if (S.edit && (S.draw || S.erase || (S.tool && S.tool !== "text"))) textFertig();   // anderes Werkzeug gewählt: Eingabe abschließen
+    if (S.sel && (S.draw || S.erase || S.tool === "mline" || S.tool === "marea" || S.tool === "calib" || S.tool === "text")) { S.sel = null; frame(); }
+    selBar();
     const q = (id) => document.getElementById(id);
     q("t-draw").classList.toggle("on", S.draw);
     q("t-text").classList.toggle("on", S.tool === "text");
@@ -538,14 +697,29 @@ const Ink = (() => {
     document.querySelectorAll("#v-tools [data-c]").forEach((b) => (b.onclick = () => {
       S.erase = false; if (S.tool !== "text" && !FORMEN.includes(S.tool)) S.tool = null; cancelMeasure();
       S.color = b.dataset.c; S.alpha = +(b.dataset.a || 1); S.mult = +(b.dataset.m || 1);
-      if (S.edit) { S.edit.st.c = S.color; S.edit.st.m = S.alpha < 1; }
+      if (S.edit) { S.edit.st.c = S.color; S.edit.st.m = S.alpha < 1; } else stilAufAuswahl(true);
       updateUi(); fuerText();
     }));
     document.querySelectorAll("#v-tools [data-w]").forEach((b) => (b.onclick = () => {
       if (S.tool !== "text" && !FORMEN.includes(S.tool)) S.tool = null; cancelMeasure(); S.wpx = +b.dataset.w;
-      if (S.edit) S.edit.st.fs = (TXT_PX[S.wpx] || 16) / (V.w * V.s);
+      if (S.edit) S.edit.st.fs = (TXT_PX[S.wpx] || 16) / (V.w * V.s); else stilAufAuswahl(false);
       updateUi(); fuerText();
     }));
+    // Markiertes Objekt: Entf/Rücktaste löscht, Esc hebt die Markierung auf (nicht beim Schreiben)
+    document.addEventListener("keydown", (e) => {
+      if (!S.sel || document.getElementById("viewer").hidden || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName)) return;
+      if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); loescheAuswahl(); }
+      else if (e.key === "Escape") waehle(null);
+    });
+  }
+  function stilAufAuswahl(farbe) {   // Farbe bzw. Stärke auf das markierte Objekt anwenden (rückgängig machbar)
+    const st = S.sel;
+    if (!st || !S.strokes.includes(st) || st.pg !== V.page) return;
+    const alt = { c: st.c, a: st.a, w: st.w, m: st.m, fs: st.fs };
+    if (st.type === "text") { if (farbe) { st.c = S.color; st.m = S.alpha < 1; } else st.fs = (TXT_PX[S.wpx] || 16) / (V.w * V.s); }
+    else if (farbe) { st.c = S.color; st.a = S.alpha; }
+    else st.w = (S.wpx * S.mult) / (V.w * V.s);
+    S.hist.push({ t: "text", s: st, alt }); save(); frame();
   }
 
   /* ---- Öffnen, Schließen, Liste ---- */
@@ -553,6 +727,7 @@ const Ink = (() => {
     if (S.edit) { S.edit.ta.remove(); S.edit.bar.remove(); S.edit = null; }
     S.key = key; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.visible = true; S.erase = false; S.draw = false;
     S.tool = null; S.measure = null; S.calib = null; S.pendingTool = null; S.scale = null; S.dragPt = null;
+    S.sel = null; S.drag = null; S.tipp = null; S.fangPunkt = null;
     document.getElementById("v-scale").hidden = true; renderBar();
     updateUi();
     try { const r = await tx("readonly", (s) => s.get(key)); if (r && S.key === key) { S.strokes = r.strokes || []; S.scale = r.mProPt || null; updateUi(); redraw(); } } catch { /* ohne Speicher weiterarbeiten */ }
@@ -562,6 +737,7 @@ const Ink = (() => {
     clearTimeout(saveT);
     if (S.key) await persist(S.key, S.strokes, S.scale);
     S.key = null; S.strokes = []; S.hist = []; S.cur = null; S.pid = null; S.tool = null; S.measure = null; S.calib = null; S.dragPt = null;
+    S.sel = null; S.drag = null; S.tipp = null; selBar();
     const c = cv(); c.getContext("2d").clearRect(0, 0, c.width, c.height);
   }
 
