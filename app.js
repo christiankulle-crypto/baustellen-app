@@ -262,7 +262,10 @@ function ganttHtml(bz, heute, breit) {
     const left = pct(v.start), width = Math.max(pct(v.end) - pct(v.start), 0.4);
     const status = new Date(v.end) < dHeute ? "done" : new Date(v.start) > dHeute ? "future" : "";
     const lbl = v.start === v.end ? tag(v.start) : `${tag(v.start)}–${tag(v.end)}`;
-    return `<div class="gantt-bar ${status}" style="top:${i * rowH + 6}px; left:${left}%; width:${width}%" title="${esc(v.name)}: ${tag(v.start)} – ${tag(v.end)}"></div>
+    // Fortschritt nach Kalender: laufender Vorgang ist bis heute dunkel gefüllt, der Rest hell
+    const anteil = status === "" ? Math.min(100, Math.round(((dHeute - new Date(v.start)) / 864e5 + 1) / ((new Date(v.end) - new Date(v.start)) / 864e5 + 1) * 100)) : null;
+    const fuell = anteil === null ? "" : `background:linear-gradient(to right, var(--accent) ${anteil}%, color-mix(in srgb, var(--accent) 38%, var(--card)) ${anteil}%); opacity:1;`;
+    return `<div class="gantt-bar ${status}" style="top:${i * rowH + 6}px; left:${left}%; width:${width}%; ${fuell}" title="${esc(v.name)}: ${tag(v.start)} – ${tag(v.end)}${anteil === null ? "" : " (" + anteil + " % der Zeit vorbei)"}"></div>
       ${left + width > 82   // Balken reicht bis an den rechten Rand: Datum links vom Balken
         ? `<div class="gantt-date" style="top:${i * rowH + 5}px; right:${100 - left + 1}%">${lbl}</div>`
         : `<div class="gantt-date" style="top:${i * rowH + 5}px; left:${left + width + 1}%">${lbl}</div>`}`;
