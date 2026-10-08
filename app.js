@@ -243,8 +243,15 @@ function ganttHtml(bz, heute) {
     const left = pct(v.start), width = Math.max(pct(v.end) - pct(v.start), 0.4);
     const status = new Date(v.end) < dHeute ? "done" : new Date(v.start) > dHeute ? "future" : "";
     const lbl = v.start === v.end ? tag(v.start) : `${tag(v.start)}–${tag(v.end)}`;
-    return `<div class="gantt-bar ${status}" style="top:${i * rowH + 6}px; left:${left}%; width:${width}%" title="${esc(v.name)}: ${tag(v.start)} – ${tag(v.end)}"></div>
-      ${left + width > 82   // Balken reicht bis an den rechten Rand: Datum links vom Balken
+    // Gewerk aus mehreren Einzelvorgängen (z. B. Albsiedlung): heller Gesamtbalken, darin die einzelnen Vorgänge kräftig
+    const teile = (v.vorgaenge || []).map((x) => {
+      const l = pct(x.start), w = Math.max(pct(x.end) - pct(x.start), 0.4), st = new Date(x.end) < dHeute ? "done" : new Date(x.start) > dHeute ? "future" : "";
+      return `<div class="gantt-bar gantt-teil ${st}" style="top:${i * rowH + 6}px; left:${l}%; width:${w}%" title="${esc(x.name)}: ${tag(x.start)} – ${tag(x.end)}"></div>`;
+    }).join("");
+    return `<div class="gantt-bar ${teile ? "gantt-gesamt" : status}" style="top:${i * rowH + 6}px; left:${left}%; width:${width}%" title="${esc(v.name)}: ${tag(v.start)} – ${tag(v.end)}"></div>${teile}
+      ${left + width > 82 && left < 20   // Balken füllt fast die ganze Breite: kein Platz neben dem Balken, Datum auf dem Balken
+        ? `<div class="gantt-date gantt-date-in" style="top:${i * rowH + 5}px; left:${left + 8}%">${lbl}</div>`
+        : left + width > 82   // Balken reicht bis an den rechten Rand: Datum links vom Balken
         ? `<div class="gantt-date" style="top:${i * rowH + 5}px; right:${100 - left + 1}%">${lbl}</div>`
         : `<div class="gantt-date" style="top:${i * rowH + 5}px; left:${left + width + 1}%">${lbl}</div>`}`;
   }).join("");
@@ -264,6 +271,8 @@ function ganttHtml(bz, heute) {
       </div>
     </div></div>
     </div>
+    ${rows.some((v) => v.vorgaenge) ? `<div class="gantt-teile">${rows.map((v) => `<details class="gantt-det"><summary><span class="code">${esc(v.code)}</span>${esc(v.name)}<span class="gantt-dr">${tag(v.start)}–${tag(v.end)}</span></summary>
+      ${(v.vorgaenge || []).map((x) => `<div class="gantt-vg"><span class="num">${x.start === x.end ? tag(x.start) : tag(x.start) + "–" + tag(x.end)}</span>${esc(x.name)}</div>`).join("")}</details>`).join("")}</div>` : ""}
     <div class="gantt-legend">
       <span><span class="sw" style="background:var(--accent)"></span>läuft / bereits abgeschlossen</span>
       <span><span class="sw" style="background:transparent; border:1.5px dashed var(--accent)"></span>noch nicht begonnen</span>
