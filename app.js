@@ -210,15 +210,32 @@ async function viewBauzeit(proj) {
   shell({ title: proj.name, back: "#/", tabs }, loading());
   const { j: bz, offline, t } = await data.json(`${proj.slug}/bauzeit.json`);
   const heute = (() => { const d = new Date(), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; })();
+  // Viele Kurzvorgänge (mittlere Dauer unter 8 Tagen, z. B. Albsiedlung): Zeitachse standardmäßig breit, sonst wären es Striche
+  const dauer = bz.gewerke.map((v) => Math.max(1, (new Date(v.end) - new Date(v.start)) / 864e5 + 1)).sort((x, y) => x - y);
+  const platz = Math.min(innerWidth, 1200) - 28 - 36 - 190;   // grob: Breite der Zeitachse ohne Namensspalte
+  const kurz = ((new Date(bz.projektEnde) - new Date(bz.projektStart)) / 864e5) * (26 / dauer[Math.floor(dauer.length / 2)]) > platz * 1.1;   // breite Achse wäre merklich breiter als der Platz
+  const breit = kurz && store.get("bzBreit:" + proj.slug) !== false;
   shell({ title: proj.name, back: "#/", tabs }, `
     ${offline ? `<div class="note warn">Offline: Stand vom ${new Date(t).toLocaleString("de-DE")}.</div>` : ""}
     <p class="meta">Quelle: ${esc(bz.quelle)}${bz.planstand ? `, Planstand ${esc(bz.planstand)}` : ""}.
       Zeigt die geplante <b style="color:var(--text)">Bauzeit</b> je Gewerk – nicht den Abrechnungsstand; beides kann zeitversetzt sein
       (z.&nbsp;B. weil erst nach Ausführung abgerechnet wird).</p>
-    <div class="gantt-card">${ganttHtml(bz, heute)}</div>
+    ${kurz ? `<div class="chips"><button class="chip ${breit ? "on" : ""}" id="bz-breit" aria-label="Zeitachse in die Breite ziehen, damit auch kurze Vorgänge als Balken lesbar sind (dann seitlich verschieben)">Zeitachse breiter</button>${breit ? `<span class="meta" style="align-self:center; margin:0 0 0 6px">Für die späteren Monate das Diagramm seitlich ziehen bzw. wischen.</span>` : ""}</div>` : ""}
+    <div class="gantt-card">${ganttHtml(bz, heute, breit)}</div>
     ${proj.bauzeit_pdf ? `<button class="card plan" id="bz-pdf"><span class="pi">PDF</span><span><div class="pn">Original-Bauzeitenplan öffnen</div>
       <div class="pm">${esc(bz.quelle)} · alle ${bz.vorgaenge_gesamt || ""} Vorgänge</div></span></button>` : ""}
     <p class="meta">Datenstand vom ${esc(bz.erzeugt)}</p>`);
+  $("main").style.maxWidth = "1200px";   // das Diagramm darf den Platz am PC nutzen
+  const sw = $("#bz-breit");
+  if (sw) sw.onclick = () => { store.set("bzBreit:" + proj.slug, !breit); viewBauzeit(proj); };
+  const sc0 = $(".gantt-scroll");   // PC: Diagramm mit der Maus anfassen und seitlich ziehen
+  if (sc0) {
+    let x0 = null, l0 = 0;
+    sc0.addEventListener("pointerdown", (e) => { if (e.pointerType === "mouse" && e.button === 0) { x0 = e.clientX; l0 = sc0.scrollLeft; try { sc0.setPointerCapture(e.pointerId); } catch { /* ohne aktiven Zeiger */ } sc0.style.cursor = "grabbing"; } });
+    sc0.addEventListener("pointermove", (e) => { if (x0 !== null) sc0.scrollLeft = l0 - (e.clientX - x0); });
+    const ende = () => { x0 = null; sc0.style.cursor = ""; };
+    sc0.addEventListener("pointerup", ende); sc0.addEventListener("pointercancel", ende);
+  }
   const b = $("#bz-pdf");
   if (b) b.onclick = () => openPlan({ name: bz.quelle, path: `${CFG.projekteRoot}/${proj.ordner}/${proj.bauzeit_pdf}` });
   // Schmaler Bildschirm: so weit wischen, dass die Heute-Linie zu sehen ist (die Namen erreicht man per Zurückwischen)
@@ -228,10 +245,12 @@ async function viewBauzeit(proj) {
     if (x > card.clientWidth - 40) card.scrollLeft = x - card.clientWidth * 0.7;
   }
 }
-function ganttHtml(bz, heute) {
+function ganttHtml(bz, heute, breit) {
   const d0 = new Date(bz.projektStart), d1 = new Date(bz.projektEnde), dHeute = new Date(heute), total = d1 - d0;
   const pct = (s) => Math.max(0, Math.min(100, ((new Date(s) - d0) / total) * 100));
   const rowH = 26, rows = bz.gewerke, plotH = rows.length * rowH + 6;
+  const dauern = rows.map((v) => Math.max(1, (new Date(v.end) - new Date(v.start)) / 864e5 + 1)).sort((x, y) => x - y);
+  const achsenBreite = breit ? Math.round((total / 864e5) * (26 / dauern[Math.floor(dauern.length / 2)])) : 0;   // breit: px je Tag = 26 / mittlere Dauer, sonst einpassen
   const ticks = [];
   for (let y = d0.getUTCFullYear(), m = d0.getUTCMonth() + (d0.getUTCDate() > 1 ? 1 : 0); ; m++) {
     const iso = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
@@ -243,15 +262,8 @@ function ganttHtml(bz, heute) {
     const left = pct(v.start), width = Math.max(pct(v.end) - pct(v.start), 0.4);
     const status = new Date(v.end) < dHeute ? "done" : new Date(v.start) > dHeute ? "future" : "";
     const lbl = v.start === v.end ? tag(v.start) : `${tag(v.start)}–${tag(v.end)}`;
-    // Gewerk aus mehreren Einzelvorgängen (z. B. Albsiedlung): heller Gesamtbalken, darin die einzelnen Vorgänge kräftig
-    const teile = (v.vorgaenge || []).map((x) => {
-      const l = pct(x.start), w = Math.max(pct(x.end) - pct(x.start), 0.4), st = new Date(x.end) < dHeute ? "done" : new Date(x.start) > dHeute ? "future" : "";
-      return `<div class="gantt-bar gantt-teil ${st}" style="top:${i * rowH + 6}px; left:${l}%; width:${w}%" title="${esc(x.name)}: ${tag(x.start)} – ${tag(x.end)}"></div>`;
-    }).join("");
-    return `<div class="gantt-bar ${teile ? "gantt-gesamt" : status}" style="top:${i * rowH + 6}px; left:${left}%; width:${width}%" title="${esc(v.name)}: ${tag(v.start)} – ${tag(v.end)}"></div>${teile}
-      ${left + width > 82 && left < 20   // Balken füllt fast die ganze Breite: kein Platz neben dem Balken, Datum auf dem Balken
-        ? `<div class="gantt-date gantt-date-in" style="top:${i * rowH + 5}px; left:${left + 8}%">${lbl}</div>`
-        : left + width > 82   // Balken reicht bis an den rechten Rand: Datum links vom Balken
+    return `<div class="gantt-bar ${status}" style="top:${i * rowH + 6}px; left:${left}%; width:${width}%" title="${esc(v.name)}: ${tag(v.start)} – ${tag(v.end)}"></div>
+      ${left + width > 82   // Balken reicht bis an den rechten Rand: Datum links vom Balken
         ? `<div class="gantt-date" style="top:${i * rowH + 5}px; right:${100 - left + 1}%">${lbl}</div>`
         : `<div class="gantt-date" style="top:${i * rowH + 5}px; left:${left + width + 1}%">${lbl}</div>`}`;
   }).join("");
@@ -260,7 +272,7 @@ function ganttHtml(bz, heute) {
     <div class="gantt-labels"><div style="position:relative; height:${plotH}px">
       ${rows.map((v, i) => `<div class="gantt-label" style="top:${i * rowH + 4}px"><span class="code">${esc(v.code)}</span>${esc(v.name)}</div>`).join("")}
     </div></div>
-    <div class="gantt-scroll"><div class="gantt-inner">
+    <div class="gantt-scroll"><div class="gantt-inner" style="min-width:${achsenBreite}px">
       <div class="gantt-months">${ticks.map((k) => `<span style="left:${pct(k.iso)}%">${k.label}</span>`).join("")}</div>
       <div class="gantt-plot" style="height:${plotH}px">
         ${ticks.map((k) => `<div class="gantt-grid-line" style="left:${pct(k.iso)}%"></div>`).join("")}
@@ -271,11 +283,9 @@ function ganttHtml(bz, heute) {
       </div>
     </div></div>
     </div>
-    ${rows.some((v) => v.vorgaenge) ? `<div class="gantt-teile">${rows.map((v) => `<details class="gantt-det"><summary><span class="code">${esc(v.code)}</span>${esc(v.name)}<span class="gantt-dr">${tag(v.start)}–${tag(v.end)}</span></summary>
-      ${(v.vorgaenge || []).map((x) => `<div class="gantt-vg"><span class="num">${x.start === x.end ? tag(x.start) : tag(x.start) + "–" + tag(x.end)}</span>${esc(x.name)}</div>`).join("")}</details>`).join("")}</div>` : ""}
     <div class="gantt-legend">
       <span><span class="sw" style="background:var(--accent)"></span>läuft / bereits abgeschlossen</span>
-      <span><span class="sw" style="background:transparent; border:1.5px dashed var(--accent)"></span>noch nicht begonnen</span>
+      <span><span class="sw" style="background:color-mix(in srgb, var(--accent) 38%, var(--card))"></span>noch nicht begonnen</span>
       <span><span class="sw" style="background:var(--warn-soft); opacity:.8"></span>Schulferien</span>
       <span><span class="sw" style="background:var(--warn)"></span>heute</span>
     </div>`;
