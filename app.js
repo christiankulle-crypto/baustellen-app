@@ -668,15 +668,25 @@ async function viewProtokolle(proj) {
   const subs = top.filter((it) => it.folder && !/^(archiv|wiederherstellung|_)/i.test(it.name));
   (await Promise.all(subs.map((s) => data.list(base + "/" + s.name).then((l) => l.map((it) => ({ ...it, pfad: base + "/" + s.name + "/" + it.name })), () => []))))
     .forEach((l) => files.push(...l.filter((it) => !it.folder)));
-  const termine = {};
-  for (const f of files) {
-    if (!/\.(pdf|docx?)$/i.test(f.name) || /vorlage/i.test(f.name)) continue;
-    const d = protoDatum(f.name, f.lastModifiedDateTime);
-    (termine[d] = termine[d] || []).push(f);
+  // Eine Zeile je Protokoll: nur Word und PDF desselben Protokolls gehören zusammen (gleicher Dateiname ohne Endung).
+  // Zwei verschiedene Protokolle am selben Tag (eigenes + Büro) bleiben getrennt, sonst fehlt eines in der Liste.
+  const stamm = (n) => n.replace(/\.(pdf|docx?)$/i, "").toLowerCase().replace(/[^a-z0-9äöüß]+/g, "");
+  const alleDat = files.filter((f) => /\.(pdf|docx?)$/i.test(f.name) && !/vorlage/i.test(f.name));
+  const pdfs = alleDat.filter((f) => /\.pdf$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name, "de", { numeric: true }));
+  const words = alleDat.filter((f) => !/\.pdf$/i.test(f.name));
+  const datum = (f) => protoDatum(f.name, f.lastModifiedDateTime);
+  const zeilen = pdfs.map((p) => {   // Datum der Zeile = Datum des PDFs (Dateien ohne Datum im Namen: Änderungsdatum des PDFs)
+    const w = words.findIndex((x) => stamm(x.name) === stamm(p.name));
+    return { d: datum(p), fs: w >= 0 ? [p, words.splice(w, 1)[0]] : [p] };
+  });
+  for (const w of words) {   // Word ohne gleichnamiges PDF: zum einzigen PDF-Einzelstück desselben Tags, sonst eigene Zeile
+    const einzel = zeilen.filter((z) => z.d === datum(w) && z.fs.length === 1);
+    if (einzel.length === 1 && words.filter((x) => datum(x) === datum(w)).length === 1) einzel[0].fs.push(w);
+    else zeilen.push({ d: datum(w), fs: [w] });
   }
-  const tage = Object.keys(termine).sort().reverse();
-  const knopf = (f, i, mehrere) => {   // mehrere PDFs am selben Tag (z. B. eigenes Protokoll + Protokoll des Büros): Knopf mit Namen
-    if (/\.pdf$/i.test(f.name)) return `<button class="btn sec pr-b" data-pdf="${i}" aria-label="PDF in der App öffnen: ${esc(f.name)}">${mehrere ? esc(protoTitel(f.name).split(" - ").pop() || "PDF") : "PDF"}</button>`;
+  zeilen.sort((a, b) => b.d.localeCompare(a.d) || a.fs[0].name.localeCompare(b.fs[0].name, "de", { numeric: true }));
+  const knopf = (f, i) => {
+    if (/\.pdf$/i.test(f.name)) return `<button class="btn sec pr-b" data-pdf="${i}" aria-label="PDF in der App öffnen: ${esc(f.name)}">PDF</button>`;
     const desk = f.webDavUrl ? "ms-word:ofe|u|" + f.webDavUrl : f.webUrl;   // Word am PC öffnen (zum Bearbeiten)
     return `<a class="btn sec pr-b${desk ? "" : " off"}" ${desk ? `href="${esc(desk)}"` : ""} aria-label="In Word öffnen (bearbeiten): ${esc(f.name)}">Word</a>` +
       (f.webUrl ? `<a class="pr-web" href="${esc(f.webUrl)}" target="_blank" rel="noopener" aria-label="Im Browser öffnen (Word für das Web)">im Browser</a>` : "");
@@ -684,11 +694,10 @@ async function viewProtokolle(proj) {
   const alle = [];
   shell({ title: proj.name, back: "#/", tabs }, `
     <p class="meta">Protokolle aus <b>${esc(proj.protokolle)}</b>, neueste oben. Word öffnet die Datei direkt in Word zum Bearbeiten, PDF in der App.</p>
-    ${tage.map((d) => {
-      const fs = termine[d].sort((a, b) => (/\.pdf$/i.test(b.name) ? 1 : 0) - (/\.pdf$/i.test(a.name) ? 1 : 0));
+    ${zeilen.map(({ d, fs }) => {
       const titel = protoTitel((fs.find((f) => /\.pdf$/i.test(f.name)) || fs[0]).name) || "Protokoll";
       return `<div class="card pr-row"><div class="pr-d num">${new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })}</div>
-        <div class="pr-t">${esc(titel)}</div><div class="pr-k">${fs.map((f) => knopf(f, alle.push(f) - 1, fs.filter((g) => /\.pdf$/i.test(g.name)).length > 1)).join("")}</div></div>`;
+        <div class="pr-t">${esc(titel)}</div><div class="pr-k">${fs.map((f) => knopf(f, alle.push(f) - 1)).join("")}</div></div>`;
     }).join("") || `<div class="center">Keine Protokolle im Ordner gefunden.</div>`}`);
   $("main").addEventListener("click", (e) => {
     const b = e.target.closest("[data-pdf]");
